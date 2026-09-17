@@ -1,0 +1,129 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - id: string (required)
+    //   - email: string (required)
+    //   - name: string (required)
+    //   - role: string (required, enum: SuperAdmin, CompanyAdmin, Technician)
+    //   - companyId: string (required)
+    //   - permissions: list (optional)
+    //
+    // Collection: projects
+    // Document ID: {projectId}
+    // Fields:
+    //   - id: string (required)
+    //   - companyId: string (required)
+    //   - client: string (required)
+    //   - address: string (required)
+    //   - status: string (required)
+    //   - currentStage: string (required)
+    //   - progress: number (required)
+    //   - riskLevel: string (required)
+    //   - totalCost: number (required)
+    //   - invoiceStatus: string (required)
+    //   - ... other optional fields
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SuperAdmin' ||
+          (request.auth.token.email == "merrillalex500@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isCompanyAdmin(companyId) {
+      let user = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return isAuthenticated() && user.role == 'CompanyAdmin' && user.companyId == companyId;
+    }
+
+    function isCompanyUser(companyId) {
+      let user = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return isAuthenticated() && user.companyId == companyId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function hasOnlyAllowedUserFields() {
+      return request.resource.data.keys().hasOnly(['id', 'email', 'name', 'role', 'companyId', 'permissions']);
+    }
+
+    function isValidUser() {
+      let data = request.resource.data;
+      return hasOnlyAllowedUserFields() &&
+             data.id is string && data.id.size() > 0 && data.id.size() < 100 &&
+             data.email is string && isValidEmail(data.email) && data.email.size() < 100 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.role in ['SuperAdmin', 'CompanyAdmin', 'Technician'] &&
+             data.companyId is string && data.companyId.size() > 0 && data.companyId.size() < 100 &&
+             (!('permissions' in data) || data.permissions is list);
+    }
+
+    function isValidProject() {
+      let data = request.resource.data;
+      return data.keys().hasAll(['id', 'companyId', 'client', 'address', 'status', 'currentStage', 'progress', 'riskLevel', 'totalCost', 'invoiceStatus']) &&
+             data.id is string && data.id.size() > 0 && data.id.size() < 100 &&
+             data.companyId is string && data.companyId.size() > 0 && data.companyId.size() < 100 &&
+             data.client is string && data.client.size() > 0 && data.client.size() < 200 &&
+             data.address is string && data.address.size() > 0 && data.address.size() < 500 &&
+             data.status is string && data.status.size() > 0 && data.status.size() < 100 &&
+             data.currentStage is string && data.currentStage.size() > 0 && data.currentStage.size() < 100 &&
+             data.progress is number && data.progress >= 0 && data.progress <= 100 &&
+             data.riskLevel is string && data.riskLevel.size() > 0 && data.riskLevel.size() < 50 &&
+             data.totalCost is number && data.totalCost >= 0 &&
+             data.invoiceStatus is string && data.invoiceStatus.size() > 0 && data.invoiceStatus.size() < 50;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isCompanyUser(resource.data.companyId) || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == userId && isValidUser() && (incoming().role == 'SuperAdmin' ? isAdmin() : true);
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin() || isCompanyAdmin(existing().companyId)) && isValidUser();
+      allow delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read: if isAuthenticated() && (isAdmin() || isCompanyUser(resource.data.companyId));
+      allow create: if isAuthenticated() && (isAdmin() || isCompanyUser(incoming().companyId)) && isValidProject();
+      allow update: if isAuthenticated() && (isAdmin() || isCompanyUser(existing().companyId)) && isValidProject();
+      allow delete: if isAdmin();
+    }
+  }
+}

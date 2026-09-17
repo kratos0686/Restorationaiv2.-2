@@ -1,0 +1,69 @@
+{
+  "companies": [
+    {
+      "id": "comp-1",
+      "name": "Default Restoration Co.",
+      "subscriptionPlan": "Pro",
+      "maxUsers": 10,
+      "isActive": true
+    }
+  ],
+  "users": [],
+  "projects": [
+    {
+      "id": "proj-1778047389188",
+      "companyId": "default-company",
+      "client": "Hasgfgh",
+      "address": "4344 s. waner st",
+      "lossDate": "2026-05-06T06:02",
+      "insurance": "",
+      "claimNumber": "",
+      "status": "New Intake",
+      "currentStage": "Intake",
+      "waterCategory": "Category 1 (Sanitary Water)",
+      "lossClass": "Class 1 (Least)",
+      "progress": 0,
+      "riskLevel": "medium",
+      "rooms": [],
+      "milestones": [],
+      "tasks": [],
+      "lineItems": [],
+      "totalCost": 0,
+      "invoiceStatus": "Draft",
+      "roomScans": [],
+      "videos": [],
+      "equipment": [],
+      "dailyNarratives": [
+        {
+          "id": "nl-1778047391494",
+          "date": "5/5/2026",
+          "timestamp": 1778047391532,
+          "content": "Added 1 LGR Dehumidifier to containment zone based on psychrometric recommendation.",
+          "author": "Richard Merrill",
+          "tags": [
+            "Equipment",
+            "Auto-Applied"
+          ],
+          "generated": true,
+          "entryType": "equipment",
+          "data": {
+            "action": "add",
+            "type": "Dehumidifier",
+            "model": "LGR"
+          }
+        }
+      ],
+      "dryingMonitor": [],
+      "summary": "Supply line to the toilet in the guest bathroom broke"
+    }
+  ],
+  "inventory": [
+    {
+      "id": "inv-1780193761794",
+      "type": "Dehumidifier",
+      "model": "DRI=EZ",
+      "status": "in_use",
+      "notes": "deghu"
+    }
+  ]
+}

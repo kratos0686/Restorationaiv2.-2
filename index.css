@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-brand-blue: #2563eb;
+  --color-brand-indigo: #4f46e5;
+  --color-brand-cyan: #06b6d4;
+  --color-brand-alert: #ef4444;
+  --color-brand-success: #10b981;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-200 antialiased h-screen overflow-hidden;
+  }
+}
+
+@layer utilities {
+  .bg-radial-gradient {
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(30, 64, 175, 0.15) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(14, 116, 144, 0.15) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, rgba(30, 58, 138, 0.15) 0px, transparent 50%);
+    background-attachment: fixed;
+  }
+}
+
+.glass-panel {
+  @apply bg-slate-900/60 backdrop-blur-xl border border-white/10;
+}
+
+.glass-card {
+  @apply bg-white/5 border border-white/10 backdrop-blur-md;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes scan {
+  0% { transform: translateY(-100%); opacity: 0; }
+  50% { opacity: 0.5; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+.scanner-line {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #06b6d4, transparent);
+  animation: scan 3s infinite linear;
+}
+
+@keyframes float-ar-marker {
+  0%, 100% { transform: translate(-50%, -100%) translateY(0px); }
+  50% { transform: translate(-50%, -100%) translateY(-6px); }
+}
+
+.animate-float {
+  animation: float-ar-marker 3s ease-in-out infinite;
+}
+
+
+@layer utilities {
+  .markdown-body h1 {
+    @apply text-2xl font-black mb-4 border-b pb-2 text-slate-900 border-slate-300;
+  }
+  .markdown-body h2 {
+    @apply text-xl font-bold mt-6 mb-3 text-brand-indigo;
+  }
+  .markdown-body h3 {
+    @apply text-lg font-bold mt-5 mb-2 text-slate-800;
+  }
+  .markdown-body p {
+    @apply mb-4 leading-relaxed text-slate-700;
+  }
+  .markdown-body ul {
+    @apply list-disc list-inside mb-4 pl-4 text-slate-700;
+  }
+  .markdown-body ol {
+    @apply list-decimal list-inside mb-4 pl-4 text-slate-700;
+  }
+  .markdown-body li {
+    @apply mb-1;
+  }
+  .markdown-body table {
+    @apply w-full mb-6 border-collapse border border-slate-300;
+  }
+  .markdown-body th {
+    @apply bg-slate-100 p-2 border border-slate-300 font-bold text-left text-slate-800;
+  }
+  .markdown-body td {
+    @apply p-2 border border-slate-300 text-slate-700;
+  }
+  .markdown-body strong {
+    @apply font-bold text-slate-900;
+  }
+  .markdown-body blockquote {
+    @apply border-l-4 border-brand-indigo pl-4 italic text-slate-600 my-4 bg-slate-50 p-3 rounded-r-lg;
+  }
+}

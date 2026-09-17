@@ -1,0 +1,86 @@
+name: Restoration-AI CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint-and-build:
+    name: Lint, Test & Compile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Base
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Runtime environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install NPM Dependencies
+        run: npm ci
+
+      - name: Code Quality Audit (Linting)
+        run: npm run lint
+
+      - name: Standalone Production Build compilation
+        run: npm run build
+        env:
+          NODE_ENV: production
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  deploy:
+    name: Cloud Delivery & Infrastructure Sync
+    needs: lint-and-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Setup GCP Authentication via Service Account or Workload Identity Provider
+      - name: Authenticate with Google Cloud Platform
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up GCP Cloud SDK CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          install_components: 'beta'
+
+      # Configure Docker auth helper to push built images to Google Container/Artifact Registry
+      - name: Configure Docker authorizations
+        run: |
+          gcloud auth configure-docker us-east1-docker.pkg.dev --quiet
+
+      # Compile and deploy deep learning integration image to Cloud Run
+      - name: Build and Push Server Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/restoration-ai/server:latest
+
+      - name: Deploy Express Gateway Router on Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: restoration-ai-prod
+          image: us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/restoration-ai/server:latest
+          region: us-east1
+          env_vars: |
+            NODE_ENV=production
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+
+      # Deploy static web dashboard and components to Firebase Hosting for CDN delivery
+      - name: Setup Firebase CLI Interface
+        run: npm install -g firebase-tools
+
+      - name: Deploy Static React Assets to Firebase Hosting
+        run: firebase deploy --only hosting --token "${{ secrets.FIREBASE_TOKEN }}"

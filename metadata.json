@@ -1,0 +1,14 @@
+{
+  "name": "Remix: RestorationAI",
+  "description": "High-performance water restoration documentation ecosystem. AI-first workflow for psychrometrics, AR mapping, and compliance with the ansi and iicrc sr500. Written in react native",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation",
+    "notifications"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "requestDataPermissions": {}
+}

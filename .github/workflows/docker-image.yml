@@ -1,0 +1,93 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+  id-token: write  # required for Workload Identity Federation
+
+env:
+  IMAGE_NAME: restoration-ai
+
+jobs:
+  build:
+    name: Build & verify Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Authenticate to Google Cloud via Workload Identity Federation
+      # NOTE: Secrets are not available to workflows triggered from forked PRs.
+      # This condition allows secrets on pushes and on same-repo PRs, but skips fork PRs.
+      - name: Authenticate to Google Cloud (WIF)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      # ── 3. Fetch GEMINI_API_KEY from GCP Secret Manager ────────────────
+      - name: Get Gemini API key from Secret Manager
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        id: gemini_secret
+        uses: google-github-actions/get-secretmanager-secrets@v2
+        with:
+          secrets: |-
+            GEMINI_API_KEY:projects/${{ secrets.GCP_PROJECT_ID }}/secrets/GEMINI_API_KEY/versions/latest
+
+      # ── 4. Set up Docker Buildx (multi-platform / cache support) ───────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── 5. Cache Docker layers ─────────────────────────────────────────
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      # ── 6. Build Docker image (no push — CI validation only) ───────────
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      # ── 7. Smoke-test: verify the container starts and serves HTTP ──────
+      - name: Smoke test container
+        env:
+          GEMINI_API_KEY: ${{ steps.gemini_secret.outputs.GEMINI_API_KEY || '' }}
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }}:test .
+          docker run -d \
+            --name restoration-ai-test \
+            -e NODE_ENV=production \
+            -e GEMINI_API_KEY="$GEMINI_API_KEY" \
+            -p 3000:3000 \
+            ${{ env.IMAGE_NAME }}:test
+          echo "Waiting for container to start..."
+          sleep 10
+          curl --fail --retry 5 --retry-delay 3 http://localhost:3000/health || \
+            curl --fail --retry 5 --retry-delay 3 http://localhost:3000 || \
+            (docker logs restoration-ai-test && exit 1)
+          docker stop restoration-ai-test
+          docker rm restoration-ai-test
+
+      # ── 8. Move cache (prevents unbounded cache growth) ────────────────
+      - name: Move Docker layer cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache

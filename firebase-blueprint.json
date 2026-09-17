@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the application",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["SuperAdmin", "CompanyAdmin", "Technician"] },
+        "companyId": { "type": "string" },
+        "permissions": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["id", "email", "name", "role", "companyId"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A restoration project (Loss File)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "client": { "type": "string" },
+        "clientEmail": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "address": { "type": "string" },
+        "status": { "type": "string" },
+        "currentStage": { "type": "string" },
+        "progress": { "type": "number" },
+        "lossDate": { "type": "string" },
+        "startDate": { "type": "string" },
+        "estimate": { "type": "string" },
+        "insurance": { "type": "string" },
+        "policyNumber": { "type": "string" },
+        "adjuster": { "type": "string" },
+        "adjusterEmail": { "type": "string" },
+        "adjusterPhone": { "type": "string" },
+        "claimNumber": { "type": "string" },
+        "summary": { "type": "string" },
+        "riskLevel": { "type": "string" },
+        "waterCategory": { "type": "string" },
+        "lossClass": { "type": "string" },
+        "totalCost": { "type": "number" },
+        "invoiceStatus": { "type": "string" },
+        "budget": { "type": "number" }
+      },
+      "required": ["id", "companyId", "client", "address", "status", "currentStage", "progress", "riskLevel", "totalCost", "invoiceStatus"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles"
+    },
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "Stores restoration projects"
+    }
+  }
+}
