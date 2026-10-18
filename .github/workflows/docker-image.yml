@@ -24,10 +24,10 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Authenticate to Google Cloud via Workload Identity Federation
-      # NOTE: Secrets are not available to workflows triggered from forked PRs.
-      # This condition allows secrets on pushes and on same-repo PRs, but skips fork PRs.
+      # Secrets are not available to workflows triggered from forked or Dependabot PRs.
+      # This condition allows secrets on pushes and trusted same-repo PRs.
       - name: Authenticate to Google Cloud (WIF)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
         id: auth
         uses: google-github-actions/auth@v2
         with:
@@ -36,7 +36,7 @@ jobs:
 
       # ── 3. Fetch GEMINI_API_KEY from GCP Secret Manager ────────────────
       - name: Get Gemini API key from Secret Manager
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
         id: gemini_secret
         uses: google-github-actions/get-secretmanager-secrets@v2
         with:
