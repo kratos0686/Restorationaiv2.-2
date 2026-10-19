@@ -1,6 +1,6 @@
 # Field Companion App: Offline Capture, Safe Concurrent Saves, Meter OCR
 
-Date: 2026-10-18. Status: awaiting reader review. Approved in conversation by the owner; items marked **(my call)** are assumptions the owner has not seen.
+Date: 2026-10-18. Status: ready for owner review. Approved in conversation by the owner; items marked **(my call)** are assumptions the owner has not seen.
 
 ## Intent and why
 Field technicians document water-damage jobs on site: find the source, classify the water (clean/grey/black) and mold, decide what materials come out and why, photograph and log removals, dispose, dry, chemically treat (encapsulate if mold), leave. Their phones often have no signal (basements, flooded buildings). The owner wants a **native Android app for this field work only**; billing, admin, dashboards stay on the web/desktop app. The one thing that must never fail is **keeping working with no signal**.
@@ -56,5 +56,16 @@ Competitor research (Encircle Hydro, Paul Davis MICA, GoCanvas drying log) shows
 ## Left to the builder
 Local database choice (Room expected), sync/conflict mechanics beyond the rules above, API shapes, migration mechanics, background work scheduling, OCR confidence thresholds, project structure of the Android app, test strategy, and how to stage the rollout.
 
-## Open at time of writing
-See reviewer questions resolved below (to be filled after the builder check).
+## Decisions added after reviewer questions
+Owner-decided:
+- **Conflicts: keep both, flag it.** On a conflicting edit to the same record, the most recently synced version becomes current, the older version is kept in the record's history, and the record is flagged "edited by two people" for office review. Nothing is silently lost. The history and flag are visible to the office in the web app.
+- **Media: photos only in the native app**, compressed on the phone (about 1-2 MB each, roughly 100-300 per job), uploaded in the background on any network. Video capture stays in the web app for now. Uploads must be resumable/retryable and must not buffer whole files in server memory (the current multer route does).
+- **Release: internal APK first**, Play Store later. A debug/internal build comes first, so JDK 17 and the Android SDK get installed locally. The owner supplies `google-services.json`; a release keystore is needed only for the later Play release.
+- **OCR meters: common digital displays first** (clear digital readouts such as Delmhorst, Tramex, FLIR moisture meters and standard thermo-hygrometers). Lower accuracy on segmented LCDs is accepted; the tech always confirms.
+
+My calls (not yet seen by the owner):
+- **Offline OCR:** the Gemini fallback needs a signal, so offline the tech types the value. On-device ML Kit still works offline.
+- **Web transition:** existing nested arrays are copied once into item records. After the web client is migrated, `PATCH /projects/:id` rejects writes to the item-managed fields (rooms, chambers, tracked materials, readings, photos, videos). Until then, the server reads both forms. Stages ship independently without data loss because old nested data stays readable.
+- **Structural data:** rooms, chambers and tracked materials are records too. Deletes are soft (a deleted flag, kept for sync). Per-field last-synced-wins plus history applies to edits like rename or status change. An item that references a room not yet synced is held as pending until the room arrives. The sync cursor carries deletions.
+- **Permissions:** company and role come from the Firestore `users` document. The server enforces company membership and role permission on every new endpoint. Existing users get a one-time backfill before the Android app ships.
+- **Psychrometrics:** the phone stores raw temperature and RH. The server recomputes GPP and the other derived values on ingest so every client sees the same numbers. The Android app may compute them for display, using a shared set of test vectors against `utils/psychrometrics` so Kotlin and web agree.
