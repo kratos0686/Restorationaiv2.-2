@@ -28,7 +28,7 @@ Competitor research (Encircle Hydro, Paul Davis MICA, GoCanvas drying log) shows
 - OCR values saved without the tech seeing them first.
 
 ## Current state (verified by code review)
-- Data is nested in one Firestore doc per project: `Project.rooms[]` (each with `readings[]`, `photos[]`), `dryingChambers[]`, `trackedMaterials[]` (each with `readings[]`), `videos[]`. Types in `types.ts`. Psychrometrics (GPP etc.) computed client-side in `utils/psychrometrics`.
+- Data is nested in one Firestore doc per project (material tracking field is `dryingMonitor`, not `trackedMaterials`): `Project.rooms[]` (each with `readings[]`, `photos[]`), `dryingChambers[]`, `dryingMonitor[]` (tracked materials, each with `readings[]`), `videos[]`. Types in `types.ts`. Psychrometrics (GPP etc.) computed client-side in `utils/psychrometrics`.
 - Writes go through `PATCH /projects/:id` replacing whole arrays (`onUpdate(Partial<Project>)`). Concurrent edits overwrite each other.
 - Server (`server.ts`, Express + firebase-admin + GCS multer) has no auth middleware; `/login` and `/me` return the first user. Roles/permissions exist in types only.
 - `services/api.ts` falls back to `data/mockApi` on fetch failure; offline writes go only to the mock and are lost.
@@ -59,7 +59,7 @@ Local database choice (Room expected), sync/conflict mechanics beyond the rules 
 ## Decisions added after reviewer questions
 Owner-decided:
 - **Conflicts: keep both, flag it.** On a conflicting edit to the same record, the most recently synced version becomes current, the older version is kept in the record's history, and the record is flagged "edited by two people" for office review. Nothing is silently lost. The history and flag are visible to the office in the web app.
-- **Media: photos only in the native app**, compressed on the phone (about 1-2 MB each, roughly 100-300 per job), uploaded in the background on any network. Video capture stays in the web app for now. Uploads must be resumable/retryable and must not buffer whole files in server memory (the current multer route does).
+- **Media: photos only in the native app**, compressed on the phone (about 1-2 MB each, roughly 100-300 per job), uploaded in the background on any network. Video capture stays in the web app for now. Uploads must be retryable and idempotent. (Correction after code review: the existing `/upload` route already streams to cloud storage; its problems are an unreported size and no auth. The new project-scoped route caps photos at 25 MB.)
 - **Release: internal APK first**, Play Store later. A debug/internal build comes first, so JDK 17 and the Android SDK get installed locally. The owner supplies `google-services.json`; a release keystore is needed only for the later Play release.
 - **OCR meters: common digital displays first** (clear digital readouts such as Delmhorst, Tramex, FLIR moisture meters and standard thermo-hygrometers). Lower accuracy on segmented LCDs is accepted; the tech always confirms.
 
