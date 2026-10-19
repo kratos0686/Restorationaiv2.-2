@@ -21,7 +21,12 @@ import { APIProvider } from "@vis.gl/react-google-maps";
 interface GoogleMapsWindow {
   google?: {
     maps?: {
-      Geocoder: any;
+      Geocoder: new () => {
+        geocode(
+          request: object,
+          callback: (results: { formatted_address: string }[] | null, status: string) => void
+        ): void;
+      };
     };
   };
 }
@@ -166,7 +171,7 @@ const NewProject: React.FC = () => {
           const geocoder = new gWindow.google.maps.Geocoder();
           geocoder.geocode({ address: val }, (results, status) => {
             if (status === "OK" && results && results.length > 0) {
-              const mapped = results.map((item: any) => ({
+              const mapped = results.map((item) => ({
                 display_name: item.formatted_address,
                 cleanAddress: item.formatted_address,
               }));
@@ -202,8 +207,7 @@ const NewProject: React.FC = () => {
         if (response.ok) {
           const results = await response.json();
           if (Array.isArray(results)) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const mapped = results.map((item: any) => {
+            const mapped = results.map((item) => {
               const addr = item.address;
               let clean = "";
               if (addr) {
@@ -271,7 +275,7 @@ const NewProject: React.FC = () => {
         const gWindow = window as unknown as GoogleMapsWindow;
         if (hasValidKey && typeof window !== "undefined" && gWindow.google?.maps?.Geocoder) {
           const geocoder = new gWindow.google.maps.Geocoder();
-          geocoder.geocode({ location: { lat: latitude, lng: longitude } }, (results: any, status: any) => {
+          geocoder.geocode({ location: { lat: latitude, lng: longitude } }, (results, status) => {
             if (status === "OK" && results && results[0]) {
               const cleanAddress = results[0].formatted_address;
               setLossInfo((prev) => ({ ...prev, location: cleanAddress }));

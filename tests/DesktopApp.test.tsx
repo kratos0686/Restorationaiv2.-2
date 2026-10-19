@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 
 // --- Stub Components ---
@@ -47,7 +47,7 @@ vi.mock('../components/TaskManager', () => ({
   default: () => <div data-testid="TaskManager">TaskManager</div>
 }));
 vi.mock('../components/CommandCenter', () => ({
-  default: ({ isOpen, onClose }: any) => isOpen ? <div data-testid="CommandCenter"><button onClick={onClose}>Close</button></div> : null
+  default: ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => isOpen ? <div data-testid="CommandCenter"><button onClick={onClose}>Close</button></div> : null
 }));
 vi.mock('../components/EventToast', () => ({
   default: () => <div data-testid="EventToast">EventToast</div>
@@ -66,7 +66,7 @@ vi.mock('../context/AppContext', () => ({
   hasPermission: vi.fn()
 }));
 
-const mockProject: Project = {
+const mockProject = {
   id: 'p1',
   companyId: 'c1',
   name: 'Test Project',
@@ -82,7 +82,7 @@ const mockProject: Project = {
   equipment: [],
   photos: [],
   materials: []
-};
+} as unknown as Project;
 
 const makeCtx = (overrides = {}) => ({
   activeTab: 'dashboard',
@@ -109,7 +109,7 @@ describe('DesktopApp', () => {
   
   // ── Tab Rendering ────────────────────────────────────────────────────────────
   it('renders DesktopDashboard when activeTab is dashboard', () => {
-    vi.mocked(useAppContext).mockReturnValue(makeCtx({ activeTab: 'dashboard' }) as ReturnType<typeof useAppContext>);
+    vi.mocked(useAppContext).mockReturnValue(makeCtx({ activeTab: 'dashboard' }) as unknown as ReturnType<typeof useAppContext>);
     render(<DesktopApp />);
     expect(screen.getByTestId('DesktopDashboard')).toBeInTheDocument();
   });
@@ -118,7 +118,7 @@ describe('DesktopApp', () => {
 
   it('falls back to Dashboard when activeTab requires a selected project but none is selected', () => {
     // For example, 'drying-logs' requires selectedProjectId.
-    vi.mocked(useAppContext).mockReturnValue(makeCtx({ activeTab: 'drying-logs', selectedProjectId: null }) as ReturnType<typeof useAppContext>);
+    vi.mocked(useAppContext).mockReturnValue(makeCtx({ activeTab: 'drying-logs', selectedProjectId: null }) as unknown as ReturnType<typeof useAppContext>);
     render(<DesktopApp />);
     expect(screen.getByTestId('DesktopDashboard')).toBeInTheDocument();
   });
@@ -126,7 +126,7 @@ describe('DesktopApp', () => {
   // ── Navigation Clicks ────────────────────────────────────────────────────────
   it('calls setActiveTab("dashboard") when Dashboard nav button is clicked', async () => {
     const ctx = makeCtx();
-    vi.mocked(useAppContext).mockReturnValue(ctx as ReturnType<typeof useAppContext>);
+    vi.mocked(useAppContext).mockReturnValue(ctx as unknown as ReturnType<typeof useAppContext>);
     render(<DesktopApp />);
     // There are multiple "Dashboard" texts (mobile menu + desktop), grab the first
     fireEvent.click((await screen.findAllByText('Dashboard'))[0]);
@@ -138,7 +138,7 @@ describe('DesktopApp', () => {
     const ctx = makeCtx({
       hasPermission: (p: string) => p !== 'view_billing' // Deny billing
     });
-    vi.mocked(useAppContext).mockReturnValue(ctx as ReturnType<typeof useAppContext>);
+    vi.mocked(useAppContext).mockReturnValue(ctx as unknown as ReturnType<typeof useAppContext>);
     render(<DesktopApp />);
     
     // Billing should not be in the document
@@ -149,7 +149,7 @@ describe('DesktopApp', () => {
     const ctx = makeCtx({
       hasPermission: (p: string) => p !== 'view_admin' // Deny admin
     });
-    vi.mocked(useAppContext).mockReturnValue(ctx as ReturnType<typeof useAppContext>);
+    vi.mocked(useAppContext).mockReturnValue(ctx as unknown as ReturnType<typeof useAppContext>);
     render(<DesktopApp />);
     
     // Admin Settings should not be in the document

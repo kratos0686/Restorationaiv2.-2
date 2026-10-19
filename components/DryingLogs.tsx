@@ -671,6 +671,7 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
   const assignedRoomIds = new Set(chambers.flatMap(c => c.roomIds));
   const unassignedRooms = (project.rooms || []).filter(r => !assignedRoomIds.has(r.id));
   
+  type TabEntity = { roomIds?: string[]; dimensions?: { length?: number; width?: number }; roomType?: string };
   const roomTabs = [
       { id: 'summary', name: 'Global Data', type: 'global', entity: null },
       ...chambers.map(c => ({ id: `chamber-${c.id}`, name: `Chamber: ${c.name}`, type: 'chamber', entity: c })),
@@ -805,15 +806,15 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
                               // Calculate sq footage for air mover suggestion
                               let sqFt = 0;
                               if (isChamber) {
-                                  const chamberRooms = project.rooms?.filter(r => (activeTab.entity as any).roomIds?.includes(r.id)) || [];
+                                  const chamberRooms = project.rooms?.filter(r => (activeTab.entity as TabEntity).roomIds?.includes(r.id)) || [];
                                   sqFt = chamberRooms.reduce((acc, r) => {
                                       const l = r.dimensions?.length || 0;
                                       const w = r.dimensions?.width || 0;
                                       return acc + (l * w);
                                   }, 0);
                               } else {
-                                  const l = (activeTab.entity as any).dimensions?.length || 0;
-                                  const w = (activeTab.entity as any).dimensions?.width || 0;
+                                  const l = (activeTab.entity as TabEntity).dimensions?.length || 0;
+                                  const w = (activeTab.entity as TabEntity).dimensions?.width || 0;
                                   sqFt = l * w;
                               }
                               const estimatedAirMovers = sqFt > 0 ? Math.ceil(sqFt / 14) + 1 : 0;
@@ -855,7 +856,7 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
                                           (v) => setLogData(p => ({...p, atmospherics: { ...p.atmospherics, rooms: { ...p.atmospherics.rooms, [entityId]: { temp: v, rh: p.atmospherics.rooms[entityId]?.rh || '' } } }})),
                                           (v) => setLogData(p => ({...p, atmospherics: { ...p.atmospherics, rooms: { ...p.atmospherics.rooms, [entityId]: { temp: p.atmospherics.rooms[entityId]?.temp || '', rh: v } } }})),
                                           isChamber ? 'Chamber Atmospherics' : 'Room Atmospherics',
-                                          isChamber ? 'Combined Drying Zone' : ((activeTab.entity as any).roomType || 'General Area')
+                                          isChamber ? 'Combined Drying Zone' : ((activeTab.entity as TabEntity).roomType || 'General Area')
                                       )}
 
                                       {/* Trends Visualization */}

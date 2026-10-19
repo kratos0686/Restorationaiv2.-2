@@ -630,10 +630,10 @@ const TopNavMenu: React.FC<{
                 <div className="absolute top-full lg:left-0 right-0 mt-2 w-56 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 zoom-in-95">
                     {React.Children.map(children, child => {
                         if (React.isValidElement(child)) {
-                            return React.cloneElement(child as React.ReactElement<any>, {
-                                ...(child.props as Record<string, any>),
+                            return React.cloneElement(child as React.ReactElement<{ onClick?: () => void }>, {
                                 onClick: () => {
-                                    if (child.props.onClick) child.props.onClick();
+                                    const { onClick } = child.props as { onClick?: () => void };
+                                    onClick?.();
                                     setIsOpen(false);
                                 }
                             });

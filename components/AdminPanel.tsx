@@ -210,12 +210,8 @@ const AdminPanel: React.FC = () => {
       const created = await createCompany({
         name: newCompanyName,
         subscriptionPlan: newCompanyPlan,
-        users: [],
-        settings: {
-          requireLocationForClockIn: false,
-          requirePhotoForEquipment: false,
-          enforceComplianceChecklists: false
-        }
+        maxUsers: 10,
+        isActive: true
       });
       EventBus.publish(
         "com.restorationai.admin.company.created",

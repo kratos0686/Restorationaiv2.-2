@@ -42,7 +42,7 @@ const DesktopDashboard: React.FC<DesktopDashboardProps> = ({ projects, onProject
     // Subscribe to the global EventBus to visualize Field Telemetry
     useEffect(() => {
         const handleEvent = (e: CloudEvent) => {
-            const readableMessage = interpretTelemetry(e as any);
+            const readableMessage = interpretTelemetry({ ...e, data: e.data as Record<string, unknown> | undefined });
             if (readableMessage) {
                 // Ensure e.ui exists and has the message for rendering below
                 const displayEvent = { ...e, ui: { ...e.ui, message: readableMessage } };
@@ -58,14 +58,16 @@ const DesktopDashboard: React.FC<DesktopDashboardProps> = ({ projects, onProject
         DashboardSyncService.start(3000); // Poll every 3 seconds for real-time visualization
         
         const unsubRev = EventBus.on('com.restorationai.sync.revenue', (e) => {
-            if ((e.data as any)?.data) {
-                setRevenueChartData((e.data as any).data);
+            const payload = (e.data as { data?: typeof revenueChartData } | undefined)?.data;
+            if (payload) {
+                setRevenueChartData(payload);
             }
         });
         
         const unsubEq = EventBus.on('com.restorationai.sync.equipment', (e) => {
-            if ((e.data as any)?.data) {
-                setEquipmentData((e.data as any).data);
+            const payload = (e.data as { data?: typeof equipmentData } | undefined)?.data;
+            if (payload) {
+                setEquipmentData(payload);
             }
         });
         

@@ -1,47 +1,22 @@
-name: Restoration-AI CI/CD Pipeline
+name: Restoration-AI Deploy
 
+# Lint, type check, test and build live in ci.yml; deploy only after CI passes on main.
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 jobs:
-  lint-and-build:
-    name: Lint, Test & Compile
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code Base
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js Runtime environment
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install NPM Dependencies
-        run: npm ci
-
-      - name: Code Quality Audit (Linting)
-        run: npm run lint
-
-      - name: Standalone Production Build compilation
-        run: npm run build
-        env:
-          NODE_ENV: production
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-
   deploy:
     name: Cloud Delivery & Infrastructure Sync
-    needs: lint-and-build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       # Setup GCP Authentication via Service Account or Workload Identity Provider
       - name: Authenticate with Google Cloud Platform
