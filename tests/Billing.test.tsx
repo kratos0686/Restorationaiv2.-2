@@ -56,7 +56,7 @@ describe('Billing', () => {
     vi.mocked(useAppContext).mockReturnValue({
       selectedProjectId: null,
       hasPermission: () => true,
-    } as ReturnType<typeof useAppContext>);
+    } as unknown as ReturnType<typeof useAppContext>);
     vi.mocked(getProjectById).mockResolvedValue(null);
 
     render(<Billing />);
@@ -70,7 +70,7 @@ describe('Billing', () => {
     vi.mocked(useAppContext).mockReturnValue({
       selectedProjectId: 'p-1',
       hasPermission: () => true,
-    } as ReturnType<typeof useAppContext>);
+    } as unknown as ReturnType<typeof useAppContext>);
     vi.mocked(getProjectById).mockResolvedValue(project);
 
     render(<Billing />);
@@ -85,7 +85,7 @@ describe('Billing', () => {
     vi.mocked(useAppContext).mockReturnValue({
       selectedProjectId: 'p-1',
       hasPermission: () => true,
-    } as ReturnType<typeof useAppContext>);
+    } as unknown as ReturnType<typeof useAppContext>);
     vi.mocked(getProjectById).mockResolvedValue(project);
 
     render(<Billing />);
@@ -99,7 +99,7 @@ describe('Billing', () => {
     vi.mocked(useAppContext).mockReturnValue({
       selectedProjectId: 'p-1',
       hasPermission: () => true,
-    } as ReturnType<typeof useAppContext>);
+    } as unknown as ReturnType<typeof useAppContext>);
     vi.mocked(getProjectById).mockResolvedValue(project);
 
     render(<Billing />);
@@ -110,7 +110,7 @@ describe('Billing', () => {
     vi.mocked(useAppContext).mockReturnValue({
       selectedProjectId: 'p-1',
       hasPermission: () => true,
-    } as ReturnType<typeof useAppContext>);
+    } as unknown as ReturnType<typeof useAppContext>);
     vi.mocked(getProjectById).mockResolvedValue(project);
 
     render(<Billing />);
@@ -127,7 +127,7 @@ describe('Billing', () => {
     vi.mocked(useAppContext).mockReturnValue({
       selectedProjectId: 'p-1',
       hasPermission: () => true,
-    } as ReturnType<typeof useAppContext>);
+    } as unknown as ReturnType<typeof useAppContext>);
     vi.mocked(getProjectById).mockResolvedValue(project);
 
     render(<Billing />);
@@ -140,7 +140,7 @@ describe('Billing', () => {
     vi.mocked(useAppContext).mockReturnValue({
       selectedProjectId: 'p-1',
       hasPermission: () => true,
-    } as ReturnType<typeof useAppContext>);
+    } as unknown as ReturnType<typeof useAppContext>);
     vi.mocked(getProjectById).mockResolvedValue(project);
 
     render(<Billing />);
@@ -155,7 +155,7 @@ describe('Billing', () => {
     vi.mocked(useAppContext).mockReturnValue({
       selectedProjectId: 'p-1',
       hasPermission: () => true,
-    } as ReturnType<typeof useAppContext>);
+    } as unknown as ReturnType<typeof useAppContext>);
     vi.mocked(getProjectById).mockResolvedValue(project);
 
     render(<Billing />);

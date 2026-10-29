@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { Map, Camera, Upload, X, MapPin, AlertTriangle, Thermometer, Box, Layers, MousePointer2, Save, Trash2, Palette, Check, ArrowRight, Power, PowerOff, Search, Settings, Eye, EyeOff, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Tag, Download, FileImage, FileCode2, Crosshair, PenTool, Maximize, Plus, Play, Gauge } from 'lucide-react';
-import { Project, ARMarker, ARMappingData, ARArea, ARMeasurement, RoomScan } from '../types';
+import { Project, ARMarker, ARMappingData, ARArea, ARMeasurement, RoomScan, RoomMaterials } from '../types';
+
+type DemoScanMaterials = { flooring?: string; wall?: string; trim?: string };
 import { GoogleGenAI, Type } from '@google/genai';
 import { EventBus } from '../services/EventBus';
 import WalkthroughViewer from './WalkthroughViewer';
@@ -2447,9 +2449,9 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
                               <div className="space-y-1 text-[9px] text-slate-400">
                                 <span className="text-[8px] text-slate-600 uppercase font-black block tracking-wider">A.I. Extracted Materials</span>
                                 <div className="flex flex-wrap gap-1">
-                                  {(scan.materials as any).flooring && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{(scan.materials as any).flooring}</span>}
-                                  {(scan.materials as any).wall && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{(scan.materials as any).wall}</span>}
-                                  {(scan.materials as any).trim && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{(scan.materials as any).trim}</span>}
+                                  {(scan.materials as unknown as DemoScanMaterials).flooring && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{(scan.materials as unknown as DemoScanMaterials).flooring}</span>}
+                                  {(scan.materials as unknown as DemoScanMaterials).wall && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{(scan.materials as unknown as DemoScanMaterials).wall}</span>}
+                                  {(scan.materials as unknown as DemoScanMaterials).trim && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{(scan.materials as unknown as DemoScanMaterials).trim}</span>}
                                 </div>
                               </div>
                             )}
@@ -2484,7 +2486,7 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
                                   flooring: 'Red Oak Hardwood',
                                   wall: 'Gypsum Wood Paneling',
                                   trim: 'Pine Moldings'
-                                } as any
+                                } as unknown as RoomMaterials
                               };
                               onUpdate({ roomScans: [...(project.roomScans || []), demoScan] });
                               EventBus.publish('com.restorationai.project.updated', { projectId: project.id }, project.id, 'Demo scan model successfully created', 'success');

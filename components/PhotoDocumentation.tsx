@@ -14,6 +14,21 @@ import VideoLogger from './VideoLogger';
 import ImageAnnotator from './ImageAnnotator';
 import WaterMitigationDocumentation from './WaterMitigationDocumentation';
 
+interface SpeechResultEvent {
+  resultIndex: number;
+  results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
+}
+
+interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechResultEvent) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
 interface PhotoDocumentationProps {
   onStartScan: () => void;
   isMobile?: boolean;
@@ -78,7 +93,7 @@ const PhotoDocumentation: React.FC<PhotoDocumentationProps> = ({ project, onUpda
     }
   };
   
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -101,7 +116,7 @@ const PhotoDocumentation: React.FC<PhotoDocumentationProps> = ({ project, onUpda
               recognitionRef.current.continuous = true;
               recognitionRef.current.interimResults = true;
               
-              recognitionRef.current.onresult = (event: any) => {
+              recognitionRef.current.onresult = (event: SpeechResultEvent) => {
                   let finalTranscript = '';
                   for (let i = event.resultIndex; i < event.results.length; ++i) {
                       if (event.results[i].isFinal) {
@@ -113,7 +128,7 @@ const PhotoDocumentation: React.FC<PhotoDocumentationProps> = ({ project, onUpda
                   }
               };
               
-              recognitionRef.current.onerror = (event: any) => {
+              recognitionRef.current.onerror = (event: { error: string }) => {
                   console.error("Speech recognition error", event.error);
                   setIsRecordingDictation(false);
               };
