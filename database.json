@@ -13,8 +13,8 @@
     {
       "id": "proj-1778047389188",
       "companyId": "default-company",
-      "client": "Hasgfgh",
-      "address": "4344 s. waner st",
+      "client": "Sample Client",
+      "address": "123 Example St, Anytown, ST 00000",
       "lossDate": "2026-05-06T06:02",
       "insurance": "",
       "claimNumber": "",
@@ -39,7 +39,7 @@
           "date": "5/5/2026",
           "timestamp": 1778047391532,
           "content": "Added 1 LGR Dehumidifier to containment zone based on psychrometric recommendation.",
-          "author": "Richard Merrill",
+          "author": "Sample Technician",
           "tags": [
             "Equipment",
             "Auto-Applied"
@@ -54,16 +54,16 @@
         }
       ],
       "dryingMonitor": [],
-      "summary": "Supply line to the toilet in the guest bathroom broke"
+      "summary": "Sample loss: supply line failure in a bathroom"
     }
   ],
   "inventory": [
     {
       "id": "inv-1780193761794",
       "type": "Dehumidifier",
-      "model": "DRI=EZ",
+      "model": "Sample LGR Model",
       "status": "in_use",
-      "notes": "deghu"
+      "notes": "Sample inventory item"
     }
   ]
 }
