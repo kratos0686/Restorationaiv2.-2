@@ -18,10 +18,12 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom', 'lucide-react', 'motion', 'recharts', 'firebase/firestore', 'firebase/auth', 'firebase/app'],
-          three: ['three', '@react-three/fiber', '@react-three/drei'],
-          genai: ['@google/genai']
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (/node_modules\/(three|@react-three\/(fiber|drei))\//.test(id)) return 'three';
+          if (/node_modules\/@google\/genai\//.test(id)) return 'genai';
+          if (/node_modules\/(react|react-dom|react-router-dom|lucide-react|motion|recharts|@firebase\/(app|auth|firestore)|firebase)\//.test(id)) return 'vendor';
+          return undefined;
         }
       }
     }
