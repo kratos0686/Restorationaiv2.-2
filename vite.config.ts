@@ -20,9 +20,9 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
-          if (/node_modules\/(three|@react-three\/(fiber|drei))\//.test(id)) return 'three';
-          if (/node_modules\/@google\/genai\//.test(id)) return 'genai';
-          if (/node_modules\/(react|react-dom|react-router-dom|lucide-react|motion|recharts|@firebase\/(app|auth|firestore)|firebase)\//.test(id)) return 'vendor';
+          if (/node_modules[/\\](three|@react-three[/\\](fiber|drei))[/\\]/.test(id)) return 'three';
+          if (/node_modules[/\\]@google[/\\]genai[/\\]/.test(id)) return 'genai';
+          if (/node_modules[/\\](react|react-dom|react-router-dom|lucide-react|motion|recharts|@firebase[/\\](app|auth|firestore)|firebase)[/\\]/.test(id)) return 'vendor';
           return undefined;
         }
       }
