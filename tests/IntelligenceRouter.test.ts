@@ -154,11 +154,11 @@ describe('IntelligenceRouter', () => {
 
   // ── Higher-level methods ────────────────────────────────────────────────────
 
-  describe('generateTasks() � removed in local refactor', () => {
-    it('calls execute with FAST_ANALYSIS', async () => {
+  describe('generateTasks()', () => {
+    it('calls execute with DEEP_REASONING', async () => {
       await router.generateTasks('project context');
       expect(mockGenerateContent).toHaveBeenCalledWith(
-        expect.objectContaining({ model: 'gemini-3-flash-preview' }),
+        expect.objectContaining({ model: 'gemini-3-pro-preview' }),
       );
     });
   });
