@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Search, MoreVertical, MapPin, Filter, Clock, CloudOff, FolderOpen, ChevronRight, Activity, Plus, Settings, Download, RefreshCw, X } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
-import { getProjects } from '../services/api';
+import { getProjects, subscribeToProjects } from '../services/api';
 import { LossFile } from '../types';
 
 import Branding from './Branding';
@@ -26,19 +26,18 @@ const Dashboard: React.FC = () => {
   }, [currentUser]);
 
   useEffect(() => {
-    let isSubscribed = true;
+    let unsubscribe: (() => void) | undefined;
     if (currentUser?.companyId) {
-      getProjects(currentUser.companyId)
-        .then(data => {
-          if (isSubscribed) {
-            setLosses(data as LossFile[]);
-          }
-        })
-        .catch(e => {
-          console.error("Failed to load projects", e);
+      // First try to load via fetch just to seed if needed
+      getProjects(currentUser.companyId).then(() => {
+        unsubscribe = subscribeToProjects(currentUser.companyId, (projs) => {
+          setLosses(projs as LossFile[]);
         });
+      });
     }
-    return () => { isSubscribed = false; };
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [currentUser]);
 
   const handleSelectLoss = (id: string) => {

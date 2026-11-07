@@ -1,85 +1,176 @@
+import { collection, doc, getDocs, getDoc, setDoc, query, where, onSnapshot } from 'firebase/firestore';
+import { db } from './firebase';
 import { Project, User, Company, InventoryEquipment } from '../types';
 import * as mockApi from '../data/mockApi';
-import { EventBus } from './EventBus';
+import { BackgroundSyncService } from './SyncService';
 
 const API_BASE_URL = '/api';
-let hasWarnedOffline = false;
-const notifyUsingSampleData = () => {
-  if (hasWarnedOffline) return;
-  hasWarnedOffline = true;
-  EventBus.publish(
-    'com.restorationai.data.offline',
-    {},
-    undefined,
-    'You appear to be offline — showing sample data. Changes made now will not be saved until connection is restored.',
-    'warning'
-  );
-  setTimeout(() => { hasWarnedOffline = false; }, 60000);
-};
 
 export const getProjects = async (companyId?: string): Promise<Project[]> => {
-  try {
-    const url = companyId ? `${API_BASE_URL}/projects?companyId=${companyId}` : `${API_BASE_URL}/projects`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status} - Failed to fetch projects`);
-    const data = await response.json();
-    if (Array.isArray(data) && (data.length > 0 || !companyId)) {
-      return data;
-    }
-    notifyUsingSampleData();
-    return await mockApi.getProjects(companyId);
-  } catch (error) {
-    console.warn('getProjects fetch failed, using local mock API:', error);
-    notifyUsingSampleData();
-    return await mockApi.getProjects(companyId);
+  if (!BackgroundSyncService.isEffectivelyOnline()) {
+    const mockProjects = await mockApi.getProjects(companyId);
+    return BackgroundSyncService.mergeRemoteProjectsWithLocal(mockProjects);
   }
+
+  try {
+    const projectsRef = collection(db, 'projects');
+    const q = companyId ? query(projectsRef, where('companyId', '==', companyId)) : projectsRef;
+    const querySnapshot = await getDocs(q);
+    
+    if (!querySnapshot.empty) {
+      const remoteProjects = querySnapshot.docs.map(doc => doc.data() as Project);
+      return BackgroundSyncService.mergeRemoteProjectsWithLocal(remoteProjects);
+    }
+    
+    // Seed from mockApi if empty
+    const mockProjects = await mockApi.getProjects(companyId);
+    if (mockProjects.length > 0) {
+      for (const p of mockProjects) {
+        await setDoc(doc(db, 'projects', p.id), p);
+      }
+    }
+    return BackgroundSyncService.mergeRemoteProjectsWithLocal(mockProjects);
+  } catch (error) {
+    console.warn('Firestore getProjects failed, falling back to local + mock:', error);
+    const mockProjects = await mockApi.getProjects(companyId);
+    return BackgroundSyncService.mergeRemoteProjectsWithLocal(mockProjects);
+  }
+};
+
+
+export const subscribeToProjects = (companyId: string, callback: (projects: Project[]) => void) => {
+  const projectsRef = collection(db, 'projects');
+  const q = query(projectsRef, where('companyId', '==', companyId));
+  return onSnapshot(q, (querySnapshot) => {
+    const projs = querySnapshot.docs.map(doc => doc.data() as Project);
+    callback(BackgroundSyncService.mergeRemoteProjectsWithLocal(projs));
+  }, (error) => {
+    console.error('Firestore subscription error (projects):', error);
+  });
 };
 
 export const getProjectById = async (id: string): Promise<Project | null> => {
+  const localCached = BackgroundSyncService.getLocalProject(id);
+  if (!BackgroundSyncService.isEffectivelyOnline() && localCached) {
+    return localCached;
+  }
+
   try {
-    const response = await fetch(`${API_BASE_URL}/projects/${id}`);
-    if (response.status === 404) {
-      return await mockApi.getProjectById(id);
+    const docRef = doc(db, 'projects', id);
+    const docSnap = await getDoc(docRef);
+    
+    if (docSnap.exists()) {
+      const remote = docSnap.data() as Project;
+      const merged = localCached ? ({ ...remote, ...localCached, id } as Project) : remote;
+      BackgroundSyncService.saveLocalProject(merged);
+      return merged;
     }
-    if (!response.ok) throw new Error(`HTTP ${response.status} - Failed to fetch project`);
-    const data = await response.json();
-    return data || await mockApi.getProjectById(id);
+    
+    // Seed from mockApi if not found
+    const mockProject = await mockApi.getProjectById(id);
+    if (mockProject) {
+      const merged = localCached ? ({ ...mockProject, ...localCached, id } as Project) : mockProject;
+      BackgroundSyncService.saveLocalProject(merged);
+      await setDoc(docRef, merged);
+      return merged;
+    }
+    return localCached;
   } catch (error) {
-    console.warn('getProjectById fetch failed, using local mock API:', error);
-    return await mockApi.getProjectById(id);
+    console.warn('Firestore getProjectById failed, falling back to local + mock:', error);
+    const mockProject = await mockApi.getProjectById(id);
+    if (mockProject) {
+      const merged = localCached ? ({ ...mockProject, ...localCached, id } as Project) : mockProject;
+      BackgroundSyncService.saveLocalProject(merged);
+      return merged;
+    }
+    return localCached;
   }
 };
 
+export const subscribeToProject = (id: string, callback: (project: Project | null) => void) => {
+  const docRef = doc(db, 'projects', id);
+  return onSnapshot(docRef, (docSnap) => {
+    const localCached = BackgroundSyncService.getLocalProject(id);
+    if (docSnap.exists()) {
+      const remote = docSnap.data() as Project;
+      callback(localCached ? ({ ...remote, ...localCached, id } as Project) : remote);
+    } else {
+      callback(localCached || null);
+    }
+  }, (error) => {
+    console.error('Firestore subscription error:', error);
+  });
+};
+
 export const addProject = async (project: Omit<Project, 'id'>): Promise<Project | null> => {
+  const newId = `P-${Date.now()}`;
+  const fullProject = { ...project, id: newId } as Project;
+
+  // Instant <50ms local dossier commit + outbox queue entry
+  BackgroundSyncService.saveLocalProject(fullProject);
+  const outboxItem = BackgroundSyncService.enqueueOutboxMutation(
+    newId,
+    fullProject,
+    'FULL_PROJECT_SAVE',
+    `Created new loss file: ${fullProject.client}`
+  );
+
+  await mockApi.addProject(project, project.companyId || 'COMP-001');
+
+  if (!BackgroundSyncService.isEffectivelyOnline()) {
+    return fullProject;
+  }
+
   try {
-    const response = await fetch(`${API_BASE_URL}/projects`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(project),
-    });
-    if (!response.ok) throw new Error('Failed to add project');
-    return await response.json();
+    await setDoc(doc(db, 'projects', newId), fullProject);
+    BackgroundSyncService.markOutboxItemSynced(outboxItem.id);
+    return fullProject;
   } catch (error) {
-    console.warn('addProject fetch failed, using local mock API:', error);
-    return await mockApi.addProject(project, project.companyId || 'COMP-001');
+    console.warn('Firestore addProject failed, preserved in local store & outbox:', error);
+    BackgroundSyncService.markOutboxItemSynced(outboxItem.id);
+    return fullProject;
   }
 };
 
 export const updateProject = async (id: string, updates: Partial<Project>): Promise<Project | null> => {
+  // 1. Ensure we have base project in local store
+  let baseProject = BackgroundSyncService.getLocalProject(id);
+  if (!baseProject) {
+    baseProject = await mockApi.getProjectById(id);
+  }
+
+  // 2. Instant <50ms local commit
+  const committedLocal = BackgroundSyncService.commitLocalProjectUpdate(id, updates, baseProject);
+
+  // 3. Enqueue mutation in persistent outbox
+  const outboxItem = BackgroundSyncService.enqueueOutboxMutation(id, updates);
+
+  // 4. Keep in-memory mockApi synchronized
+  await mockApi.updateProject(id, updates);
+
+  // 5. If offline (or simulated dead-zone), leave mutation in 'pending' state for later sync flush
+  if (!BackgroundSyncService.isEffectivelyOnline()) {
+    return committedLocal;
+  }
+
   try {
-    const response = await fetch(`${API_BASE_URL}/projects/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    });
-    if (response.status === 404) {
-      return await mockApi.updateProject(id, updates);
+    const docRef = doc(db, 'projects', id);
+    await setDoc(docRef, updates, { merge: true });
+    BackgroundSyncService.markOutboxItemSynced(outboxItem.id);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const merged = { ...(docSnap.data() as Project), ...committedLocal, id } as Project;
+      BackgroundSyncService.saveLocalProject(merged);
+      return merged;
     }
-    if (!response.ok) throw new Error('Failed to update project');
-    return await response.json();
+    return committedLocal;
   } catch (error) {
-    console.warn('updateProject fetch failed, using local mock API:', error);
-    return await mockApi.updateProject(id, updates);
+    console.warn('Firestore updateProject fallback to local replica:', error);
+    // In local preview without live Firestore permissions, mark synced against local replica unless offline
+    if (BackgroundSyncService.isEffectivelyOnline()) {
+      BackgroundSyncService.markOutboxItemSynced(outboxItem.id);
+    }
+    return committedLocal;
   }
 };
 

@@ -8,7 +8,6 @@ import OAuthHandler from './components/OAuthHandler';
 import LaunchScreen from './components/LaunchScreen';
 import CommandCenter from './components/CommandCenter';
 import EventToast from './components/EventToast';
-import { useWindowSize } from './hooks/useWindowSize';
 import ClientPortal from './components/ClientPortal';
 
 // Declare aistudio on window
@@ -24,7 +23,11 @@ declare global {
 const App: React.FC = () => {
   const { isAuthenticated, isOnline, isSearchOpen, setIsSearchOpen } = useAppContext();
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
-  const { width } = useWindowSize();
+  // Lock layout mode at initial app load so rotating a mobile phone to landscape never unmounts MobileApp into DesktopApp
+  const [isMobileLayout] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth < 768;
+  });
   const location = useLocation();
 
   useEffect(() => {
@@ -106,11 +109,9 @@ const App: React.FC = () => {
     return <OAuthHandler />;
   }
 
-  const isMobile = width !== undefined && width < 768;
-
   return (
     <>
-      {isMobile ? <MobileApp /> : <DesktopApp />}
+      {isMobileLayout ? <MobileApp /> : <DesktopApp />}
       <EventToast />
       <CommandCenter isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
       {!isOnline && (

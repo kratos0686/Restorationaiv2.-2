@@ -118,34 +118,56 @@ const TicSheet: React.FC<TicSheetProps> = ({ project, onBack, embedded = false }
                         )}
                     </div>
                 ) : (
-                    lineItems.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
-                            <FileSpreadsheet size={64} className="mb-4" />
-                            <p className="font-bold text-sm">No items documented.<br/>Run AI Scope to generate from field scans.</p>
-                        </div>
-                    ) : (
-                        lineItems.map((item) => (
-                            <div key={item.id} className="bg-white/5 border border-white/10 rounded-2xl p-4 group hover:border-brand-cyan/50 transition-all">
-                                <div className="flex justify-between items-start mb-2">
-                                    <div>
-                                        <span className="text-[10px] font-black text-brand-cyan bg-brand-cyan/10 px-2 py-0.5 rounded uppercase mr-2">{item.code}</span>
-                                        <h4 className="inline font-bold text-white text-sm">{item.description}</h4>
-                                    </div>
-                                    <button className="p-1.5 hover:bg-white/10 rounded-lg"><MoreVertical size={14}/></button>
+                    <>
+                        {lineItems.some(i => i.tags?.includes('AR Scanned')) && (
+                            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-3 flex items-center justify-between text-xs text-emerald-400">
+                                <div className="flex items-center space-x-2">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                    <span className="font-bold uppercase tracking-wider text-[11px]">AR Spatial Sync Active</span>
                                 </div>
-                                <div className="flex justify-between items-end">
-                                    <div className="flex space-x-4">
-                                        <div><span className="block text-[8px] font-black text-slate-500 uppercase">Qty</span><span className="font-mono text-xs text-slate-300">{item.quantity}</span></div>
-                                        <div><span className="block text-[8px] font-black text-slate-500 uppercase">Rate</span><span className="font-mono text-xs text-slate-300">${item.rate.toFixed(2)}</span></div>
-                                    </div>
-                                    <div className="text-right">
-                                        <span className="block text-[8px] font-black text-slate-500 uppercase">Total</span>
-                                        <span className="font-black text-brand-cyan text-lg">${item.total.toFixed(2)}</span>
-                                    </div>
-                                </div>
+                                <span className="text-slate-400 text-[10px] font-mono">
+                                    {lineItems.filter(i => i.tags?.includes('AR Scanned')).length} items measured via AR
+                                </span>
                             </div>
-                        ))
-                    )
+                        )}
+
+                        {lineItems.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
+                                <FileSpreadsheet size={64} className="mb-4" />
+                                <p className="font-bold text-sm">No items documented.<br/>Run AI Scope or scan rooms in AR Mapping to push line items.</p>
+                            </div>
+                        ) : (
+                            lineItems.map((item) => {
+                                const isAR = item.tags?.includes('AR Scanned');
+                                return (
+                                    <div key={item.id} className={`border rounded-2xl p-4 group transition-all ${isAR ? 'bg-emerald-500/5 border-emerald-500/30 hover:border-emerald-400' : 'bg-white/5 border-white/10 hover:border-brand-cyan/50'}`}>
+                                        <div className="flex justify-between items-start mb-2">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className="text-[10px] font-black text-brand-cyan bg-brand-cyan/10 px-2 py-0.5 rounded uppercase">{item.code}</span>
+                                                {isAR && (
+                                                    <span className="text-[9px] font-bold text-emerald-400 bg-emerald-400/15 border border-emerald-400/30 px-2 py-0.5 rounded-full">
+                                                        AR Scanned
+                                                    </span>
+                                                )}
+                                                <h4 className="inline font-bold text-white text-sm">{item.description}</h4>
+                                            </div>
+                                            <button className="p-1.5 hover:bg-white/10 rounded-lg"><MoreVertical size={14}/></button>
+                                        </div>
+                                        <div className="flex justify-between items-end">
+                                            <div className="flex space-x-4">
+                                                <div><span className="block text-[8px] font-black text-slate-500 uppercase">Qty</span><span className="font-mono text-xs text-slate-300">{item.quantity}</span></div>
+                                                <div><span className="block text-[8px] font-black text-slate-500 uppercase">Rate</span><span className="font-mono text-xs text-slate-300">${item.rate.toFixed(2)}</span></div>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className="block text-[8px] font-black text-slate-500 uppercase">Total</span>
+                                                <span className="font-black text-brand-cyan text-lg">${item.total.toFixed(2)}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </>
                 )}
             </div>
 

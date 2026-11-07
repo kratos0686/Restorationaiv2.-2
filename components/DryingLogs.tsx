@@ -1,14 +1,50 @@
 import React, { useState, useRef } from 'react';
-import { Play, Camera, ChevronDown, Save, ArrowLeft, Plus, Image as ImageIcon, Box, Thermometer, Wind, Check, Trash2, Droplets, Layers, Radio } from 'lucide-react';
+import { 
+  Play, 
+  Camera, 
+  ChevronDown, 
+  Save, 
+  ArrowLeft, 
+  Plus, 
+  Image as ImageIcon, 
+  Box, 
+  Thermometer, 
+  Wind, 
+  Check, 
+  Trash2, 
+  Droplets, 
+  Layers, 
+  Radio,
+  Cloud,
+  MapPin,
+  AlertTriangle,
+  ShieldCheck,
+  Compass,
+  Info
+} from 'lucide-react';
 import { calculatePsychrometricsFromDryBulb } from '../utils/psychrometrics';
+import { 
+  createReferenceReading, 
+  fetchOutdoorWeather, 
+  evaluateGppDropAlert,
+  GppDropAlertResult
+} from '../utils/exteriorReference';
 import { useAppContext } from '../context/AppContext';
-import { Project, TrackedMaterial } from '../types';
+import { 
+  Project, 
+  TrackedMaterial, 
+  Room, 
+  DryingChamber, 
+  ReferenceReading, 
+  ReferenceReadingZone 
+} from '../types';
 import { EventBus } from '../services/EventBus';
 import { generateDailyDryingNarrative } from '../services/api';
 import { BUILDING_MATERIALS } from '../data/materials';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import ReportGenerator from './ReportGenerator';
 import { MoistureLogTable } from './MoistureLogTable';
+import FloorplanViewer from './FloorplanViewer';
 
 interface BluetoothValueEvent {
   target: {
@@ -183,14 +219,25 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
   const [selectedRoomsForChamber, setSelectedRoomsForChamber] = useState<string[]>([]);
 
   const [activeTabId, setActiveTabId] = useState<string>('summary');
+  const [isFetchingWeather, setIsFetchingWeather] = useState(false);
+  const [showQuickRefModal, setShowQuickRefModal] = useState(false);
+  const [showFloorplanModal, setShowFloorplanModal] = useState(false);
+  
+  // Quick Ref Modal fields
+  const [quickRefZone, setQuickRefZone] = useState<ReferenceReadingZone>('outside');
+  const [quickRefTemp, setQuickRefTemp] = useState('');
+  const [quickRefRh, setQuickRefRh] = useState('');
+  const [quickRefNotes, setQuickRefNotes] = useState('');
 
   // Interactive Form State
   const [logData, setLogData] = useState({
     visitType: 'Day 1',
     overallStatus: 'Drying',
     atmospherics: {
-      outside: { temp: '', rh: '' },
-      unaffected: { temp: '', rh: '' },
+      outside: { temp: '', rh: '', notes: '' },
+      unaffected: { temp: '', rh: '', notes: '' },
+      unaffectedHvac: { temp: '', rh: '', notes: '' },
+      affectedHvac: { temp: '', rh: '', notes: '' },
       rooms: (project.rooms || []).reduce((acc, r) => ({ ...acc, [r.id]: { temp: '', rh: '' } }), {} as Record<string, { temp: '', rh: '' }>),
       dehus: equipment.filter(eq => eq.type === 'Dehumidifier').reduce((acc, eq) => ({ ...acc, [eq.id]: { temp: '', rh: '' } }), {} as Record<string, { temp: '', rh: '' }>)
     },
@@ -202,6 +249,63 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
     newMaterialsToAdd: [] as { id: string, name: string, location: string, goal: string, reading: string }[],
     photos: [] as { id: string, url: string, roomId: string }[]
   });
+
+  const handleFillOutdoorWeather = async (target: 'form' | 'quick' = 'form') => {
+    setIsFetchingWeather(true);
+    try {
+      const weather = await fetchOutdoorWeather(project.address || '742 Evergreen Terrace, Springfield');
+      if (target === 'form') {
+        setLogData(prev => ({
+          ...prev,
+          atmospherics: {
+            ...prev.atmospherics,
+            outside: {
+              ...prev.atmospherics.outside,
+              temp: String(weather.temp),
+              rh: String(weather.rh)
+            }
+          }
+        }));
+      } else {
+        setQuickRefTemp(String(weather.temp));
+        setQuickRefRh(String(weather.rh));
+      }
+      EventBus.publish(
+        'com.restorationai.weather.outdoor.filled',
+        { temp: weather.temp, rh: weather.rh, source: weather.source },
+        project.id,
+        `Outdoor reading populated: ${weather.temp}°F / ${weather.rh}% RH`,
+        'success'
+      );
+    } catch (err: unknown) {
+      console.warn('Weather API call failed or address not geocoded, using local sensor baseline', err);
+      if (target === 'form') {
+        setLogData(prev => ({
+          ...prev,
+          atmospherics: {
+            ...prev.atmospherics,
+            outside: {
+              ...prev.atmospherics.outside,
+              temp: '72',
+              rh: '52'
+            }
+          }
+        }));
+      } else {
+        setQuickRefTemp('72');
+        setQuickRefRh('52');
+      }
+      EventBus.publish(
+        'com.restorationai.weather.outdoor.fallback',
+        {},
+        project.id,
+        'Outdoor reading filled with baseline (72°F / 52% RH)',
+        'info'
+      );
+    } finally {
+      setIsFetchingWeather(false);
+    }
+  };
 
   const [isMaterialChecklistOpen, setIsMaterialChecklistOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -393,6 +497,35 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
 
     if (logData.notes) narrative += `Notes: ${logData.notes} `;
 
+    // 4.5. Reference & HVAC Readings Update
+    const newReferenceReadings: ReferenceReading[] = [...(project.referenceReadings || [])];
+
+    const addRefIfPresent = (
+      zone: ReferenceReadingZone,
+      data: { temp: string; rh: string; notes?: string }
+    ) => {
+      const tempNum = parseFloat(data.temp);
+      const rhNum = parseFloat(data.rh);
+      if (!isNaN(tempNum) && !isNaN(rhNum) && rhNum > 0) {
+        let finalTemp = tempNum;
+        if (settings.units.temperature === 'Celsius') {
+          finalTemp = (finalTemp * 9 / 5) + 32;
+        }
+        newReferenceReadings.push(
+          createReferenceReading(zone, finalTemp, rhNum, {
+            notes: data.notes,
+            timestamp
+          })
+        );
+        narrative += `${zone.toUpperCase()}: ${tempNum}${tempUnit}/${rhNum}%. `;
+      }
+    };
+
+    addRefIfPresent('outside', logData.atmospherics.outside);
+    addRefIfPresent('unaffected', logData.atmospherics.unaffected);
+    addRefIfPresent('unaffected-hvac', logData.atmospherics.unaffectedHvac);
+    addRefIfPresent('affected-hvac', logData.atmospherics.affectedHvac);
+
     // 5. Build AI Narrative safely
     let aiNarrative = narrative;
     try {
@@ -417,6 +550,7 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
         dryingChambers: updatedChambers,
         dryingMonitor: newMaterials,
         equipment: newEquipment,
+        referenceReadings: newReferenceReadings,
         dailyNarratives: [{
           id: `log-${timestamp}`,
           date: new Date().toLocaleDateString(),
@@ -438,7 +572,8 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
     onChangeTemp: (val: string) => void,
     onChangeRh: (val: string) => void,
     label: string,
-    subtitle?: string
+    subtitle?: string,
+    extraAction?: React.ReactNode
   ) => {
     let tempNum = parseFloat(data.temp);
     const rhNum = parseFloat(data.rh);
@@ -463,7 +598,8 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
             {subtitle && <p className="text-[10px] text-slate-400 font-bold uppercase">{subtitle}</p>}
           </div>
 
-          <div className="flex items-center">
+          <div className="flex items-center space-x-2">
+            {extraAction}
             {status === 'disconnected' && (
               <button
                 type="button"
@@ -565,6 +701,61 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
 
   const dashChartData = processDashboardChartData();
 
+  // Determine average affected chamber GPP from latest room readings
+  const latestRoomReadings = (project.rooms || []).flatMap(r => r.readings?.slice(-1) || []);
+  const currentAffectedGpp = latestRoomReadings.length > 0 
+    ? Math.round((latestRoomReadings.reduce((sum, r) => sum + (r.gpp || 0), 0) / latestRoomReadings.length) * 10) / 10
+    : (dashChartData.length > 0 ? dashChartData[dashChartData.length - 1].GrainDepression : undefined);
+
+  const gppAlert = evaluateGppDropAlert(currentAffectedGpp, project.referenceReadings);
+
+  const getLatestRef = (zone: ReferenceReadingZone) => {
+    const list = (project.referenceReadings || []).filter(r => r.zone === zone);
+    if (!list.length) return undefined;
+    return list.slice().sort((a, b) => b.timestamp - a.timestamp)[0];
+  };
+
+  const latestOutside = getLatestRef("outside");
+  const latestUnaffected = getLatestRef("unaffected");
+  const latestUnaffectedHvac = getLatestRef("unaffected-hvac");
+  const latestAffectedHvac = getLatestRef("affected-hvac");
+  const pinnedCount = trackedMaterials.filter(m => m.pinX !== undefined && m.pinY !== undefined).length;
+
+  const handleSaveQuickReferenceReading = () => {
+    if (!project || !onUpdate) return;
+    const tempNum = parseFloat(quickRefTemp);
+    const rhNum = parseFloat(quickRefRh);
+    if (isNaN(tempNum) || isNaN(rhNum) || rhNum <= 0) return;
+
+    let finalTemp = tempNum;
+    if (settings.units.temperature === "Celsius") {
+      finalTemp = (finalTemp * 9 / 5) + 32;
+    }
+
+    const newRef = createReferenceReading(quickRefZone, finalTemp, rhNum, {
+      notes: quickRefNotes,
+      timestamp: Date.now()
+    });
+
+    const updatedRefs = [...(project.referenceReadings || []), newRef];
+    onUpdate({
+      referenceReadings: updatedRefs
+    });
+
+    EventBus.publish(
+      "com.restorationai.reference.reading.added",
+      { zone: quickRefZone, temp: finalTemp, rh: rhNum, gpp: newRef.gpp },
+      project.id,
+      `Reference reading logged: ${quickRefZone.toUpperCase()} (${newRef.gpp} GPP)`,
+      "success"
+    );
+
+    setShowQuickRefModal(false);
+    setQuickRefTemp("");
+    setQuickRefRh("");
+    setQuickRefNotes("");
+  };
+
   if (!isLogging) {
       // DASHBOARD VIEW
       return (
@@ -592,6 +783,171 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
                 </button>
               </div>
             </div>
+          </div>
+
+          {/* IICRC S500 GPP-Drop & Psychrometric Alert Banner */}
+          {gppAlert && (
+            <div className={`p-5 rounded-[2rem] border transition-all ${
+              gppAlert.level === "alert"
+                ? "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                : gppAlert.level === "warning"
+                ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                : gppAlert.level === "caution"
+                ? "bg-yellow-500/10 border-yellow-500/30 text-yellow-300"
+                : "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+            }`}>
+              <div className="flex items-start space-x-3.5">
+                <div className="p-2.5 rounded-xl bg-black/40 mt-0.5 shrink-0">
+                  {gppAlert.level === "alert" || gppAlert.level === "warning" ? (
+                    <AlertTriangle size={20} className="text-current" />
+                  ) : (
+                    <ShieldCheck size={20} className="text-current" />
+                  )}
+                </div>
+                <div className="flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-bold text-white text-sm tracking-wide flex items-center space-x-2">
+                      <span>{gppAlert.title}</span>
+                      <span className="text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded-full bg-black/40">
+                        IICRC S500 Psychrometrics
+                      </span>
+                    </h3>
+                    {gppAlert.affectedGpp !== undefined && (
+                      <span className="text-xs font-mono font-bold text-white bg-black/40 px-2 py-0.5 rounded-lg">
+                        Chamber: {gppAlert.affectedGpp} GPP
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed font-medium">
+                    {gppAlert.message}
+                  </p>
+                  <p className="text-[11px] text-brand-cyan/90 font-medium pt-1">
+                    <span className="font-bold uppercase tracking-wider text-[9px] block text-slate-400">Standard Recommendation:</span>
+                    {gppAlert.recommendation}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Reference & HVAC Atmospheric Readings Section */}
+          <div className="bg-slate-900 border border-white/10 rounded-[2rem] p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center space-x-2">
+                  <Compass size={14} className="text-brand-cyan" />
+                  <span>Reference & HVAC Atmospheric Baselines</span>
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Critical baseline control readings for structure and equipment grain depression.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQuickRefModal(true)}
+                className="bg-brand-cyan hover:bg-cyan-400 text-slate-950 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center space-x-1.5 transition-all active:scale-95 shadow-md"
+              >
+                <Plus size={14} />
+                <span>Log Reference Reading</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {/* Outside */}
+              <div className="bg-black/30 border border-white/5 rounded-2xl p-3.5 space-y-1">
+                <div className="flex justify-between items-center text-[10px] font-bold uppercase text-slate-400">
+                  <span>Outside</span>
+                  <Cloud size={12} className="text-sky-400" />
+                </div>
+                {latestOutside ? (
+                  <div>
+                    <div className="text-lg font-black text-white font-mono">{latestOutside.temp}°F / {latestOutside.rh}%</div>
+                    <div className="text-[10px] font-mono text-brand-cyan font-bold">{latestOutside.gpp} GPP • {latestOutside.dewPoint}°F DP</div>
+                    <div className="text-[9px] text-slate-500 pt-1">{new Date(latestOutside.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 pt-2 italic">No reading logged</p>
+                )}
+              </div>
+
+              {/* Unaffected */}
+              <div className="bg-black/30 border border-white/5 rounded-2xl p-3.5 space-y-1">
+                <div className="flex justify-between items-center text-[10px] font-bold uppercase text-slate-400">
+                  <span>Unaffected</span>
+                  <Check size={12} className="text-emerald-400" />
+                </div>
+                {latestUnaffected ? (
+                  <div>
+                    <div className="text-lg font-black text-white font-mono">{latestUnaffected.temp}°F / {latestUnaffected.rh}%</div>
+                    <div className="text-[10px] font-mono text-emerald-400 font-bold">{latestUnaffected.gpp} GPP • {latestUnaffected.dewPoint}°F DP</div>
+                    <div className="text-[9px] text-slate-500 pt-1">{new Date(latestUnaffected.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 pt-2 italic">No reading logged</p>
+                )}
+              </div>
+
+              {/* Unaffected HVAC */}
+              <div className="bg-black/30 border border-white/5 rounded-2xl p-3.5 space-y-1">
+                <div className="flex justify-between items-center text-[10px] font-bold uppercase text-slate-400">
+                  <span>Unaffected HVAC</span>
+                  <Wind size={12} className="text-indigo-400" />
+                </div>
+                {latestUnaffectedHvac ? (
+                  <div>
+                    <div className="text-lg font-black text-white font-mono">{latestUnaffectedHvac.temp}°F / {latestUnaffectedHvac.rh}%</div>
+                    <div className="text-[10px] font-mono text-indigo-400 font-bold">{latestUnaffectedHvac.gpp} GPP • {latestUnaffectedHvac.dewPoint}°F DP</div>
+                    <div className="text-[9px] text-slate-500 pt-1">{new Date(latestUnaffectedHvac.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 pt-2 italic">No reading logged</p>
+                )}
+              </div>
+
+              {/* Affected HVAC */}
+              <div className="bg-black/30 border border-white/5 rounded-2xl p-3.5 space-y-1">
+                <div className="flex justify-between items-center text-[10px] font-bold uppercase text-slate-400">
+                  <span>Affected HVAC</span>
+                  <Wind size={12} className="text-amber-400" />
+                </div>
+                {latestAffectedHvac ? (
+                  <div>
+                    <div className="text-lg font-black text-white font-mono">{latestAffectedHvac.temp}°F / {latestAffectedHvac.rh}%</div>
+                    <div className="text-[10px] font-mono text-amber-400 font-bold">{latestAffectedHvac.gpp} GPP • {latestAffectedHvac.dewPoint}°F DP</div>
+                    <div className="text-[9px] text-slate-500 pt-1">{new Date(latestAffectedHvac.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 pt-2 italic">No reading logged</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Moisture Map Floor Plan Entry Card */}
+          <div className="bg-gradient-to-r from-slate-900 to-slate-950 border border-brand-cyan/20 rounded-[2rem] p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center space-x-4">
+              <div className="p-3 bg-brand-cyan/20 text-brand-cyan rounded-2xl">
+                <MapPin size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-sm flex items-center space-x-2">
+                  <span>Moisture Map Floor Plan</span>
+                  <span className="text-[10px] bg-brand-cyan/10 text-brand-cyan font-mono font-bold px-2 py-0.5 rounded-full">
+                    {pinnedCount} Active Pins
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Tap to drop numbered pins tied to tracked materials and record progressive moisture content.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowFloorplanModal(true)}
+              className="bg-white/5 hover:bg-white/10 text-brand-cyan border border-brand-cyan/30 px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 shrink-0"
+            >
+              Open Floor Plan & Pins
+            </button>
           </div>
   
           {dashChartData.length > 0 && (
@@ -658,6 +1014,151 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
           
           {/* Detailed Historical Digital Log */}
           <MoistureLogTable project={project} />
+
+          {/* QUICK LOG REFERENCE READING MODAL */}
+          {showQuickRefModal && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+              <div className="bg-slate-900 border border-white/10 rounded-t-3xl sm:rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl">
+                <div className="flex justify-between items-center pb-2 border-b border-white/5">
+                  <div className="flex items-center space-x-2">
+                    <Compass size={18} className="text-brand-cyan" />
+                    <h3 className="font-bold text-white text-base">Log Reference / HVAC Reading</h3>
+                  </div>
+                  <button 
+                    onClick={() => setShowQuickRefModal(false)}
+                    className="p-1.5 text-slate-400 hover:text-white rounded-lg"
+                  >
+                    <Trash2 size={16} className="hidden" />
+                    <span>✕</span>
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Zone Selection</label>
+                    <select
+                      value={quickRefZone}
+                      onChange={(e) => setQuickRefZone(e.target.value as ReferenceReadingZone)}
+                      className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm font-bold text-white outline-none focus:border-brand-cyan"
+                    >
+                      <option value="outside">Outside Ambient</option>
+                      <option value="unaffected">Unaffected Control Baseline</option>
+                      <option value="unaffected-hvac">Unaffected HVAC Supply</option>
+                      <option value="affected-hvac">Affected HVAC Return / Exhaust</option>
+                    </select>
+                  </div>
+
+                  {quickRefZone === "outside" && (
+                    <button
+                      type="button"
+                      onClick={() => handleFillOutdoorWeather("quick")}
+                      disabled={isFetchingWeather}
+                      className="w-full py-2.5 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-xl text-xs font-bold flex items-center justify-center space-x-2 transition-all disabled:opacity-50"
+                    >
+                      <Cloud size={14} className={isFetchingWeather ? "animate-spin" : ""} />
+                      <span>{isFetchingWeather ? "Fetching Live Weather..." : "Fill Outdoor from Weather"}</span>
+                    </button>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Temperature ({tempUnit})</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={quickRefTemp}
+                        onChange={(e) => setQuickRefTemp(e.target.value)}
+                        placeholder="72.0"
+                        className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm font-mono font-bold text-white outline-none focus:border-brand-cyan text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Humidity (%)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={quickRefRh}
+                        onChange={(e) => setQuickRefRh(e.target.value)}
+                        placeholder="50"
+                        className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm font-mono font-bold text-white outline-none focus:border-brand-cyan text-center"
+                      />
+                    </div>
+                  </div>
+
+                  {quickRefTemp && quickRefRh && !isNaN(parseFloat(quickRefTemp)) && !isNaN(parseFloat(quickRefRh)) && (
+                    <div className="p-3 bg-black/30 rounded-xl border border-white/5 flex justify-around text-center">
+                      <div>
+                        <span className="text-[9px] uppercase font-bold text-slate-500 block">Computed GPP</span>
+                        <span className="text-sm font-mono font-bold text-brand-cyan">
+                          {calculatePsychrometricsFromDryBulb(parseFloat(quickRefTemp), parseFloat(quickRefRh)).gpp} GPP
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[9px] uppercase font-bold text-slate-500 block">Dew Point</span>
+                        <span className="text-sm font-mono font-bold text-white">
+                          {calculatePsychrometricsFromDryBulb(parseFloat(quickRefTemp), parseFloat(quickRefRh)).dewPoint}°F
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Observation Notes (Optional)</label>
+                    <input
+                      type="text"
+                      value={quickRefNotes}
+                      onChange={(e) => setQuickRefNotes(e.target.value)}
+                      placeholder="e.g. Sunny, morning baseline..."
+                      className="w-full bg-black/50 border border-white/10 rounded-xl p-2.5 text-xs text-white outline-none focus:border-brand-cyan"
+                    />
+                  </div>
+
+                  <div className="flex space-x-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickRefModal(false)}
+                      className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-slate-400 font-bold text-xs uppercase tracking-wider rounded-xl transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveQuickReferenceReading}
+                      disabled={!quickRefTemp || !quickRefRh}
+                      className="flex-1 py-3 bg-brand-cyan hover:bg-cyan-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition-all disabled:opacity-50 shadow-md active:scale-95"
+                    >
+                      Save Reading
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* FULL FLOOR PLAN MODAL */}
+          {showFloorplanModal && (
+            <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col p-2 md:p-6 animate-in fade-in duration-200">
+              <div className="flex justify-between items-center pb-3 border-b border-white/10 px-2">
+                <div className="flex items-center space-x-2">
+                  <MapPin size={20} className="text-brand-cyan" />
+                  <h3 className="font-bold text-white text-base">Project Moisture Map & Pins</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFloorplanModal(false)}
+                  className="px-4 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden pt-3">
+                <FloorplanViewer
+                  project={project}
+                  onUpdate={onUpdate}
+                />
+              </div>
+            </div>
+          )}
         </div>
       );
   }
@@ -671,7 +1172,6 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
   const assignedRoomIds = new Set(chambers.flatMap(c => c.roomIds));
   const unassignedRooms = (project.rooms || []).filter(r => !assignedRoomIds.has(r.id));
   
-  type TabEntity = { roomIds?: string[]; dimensions?: { length?: number; width?: number }; roomType?: string };
   const roomTabs = [
       { id: 'summary', name: 'Global Data', type: 'global', entity: null },
       ...chambers.map(c => ({ id: `chamber-${c.id}`, name: `Chamber: ${c.name}`, type: 'chamber', entity: c })),
@@ -767,9 +1267,57 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
                                   </div>
                                </div>
 
-                               <div className="grid md:grid-cols-2 gap-6 mt-6">
-                                   {renderZoneInput(logData.atmospherics.outside, (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, outside: {...p.atmospherics.outside, temp: v}}})), (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, outside: {...p.atmospherics.outside, rh: v}}})), 'Outside Env.')}
-                                   {renderZoneInput(logData.atmospherics.unaffected, (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, unaffected: {...p.atmospherics.unaffected, temp: v}}})), (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, unaffected: {...p.atmospherics.unaffected, rh: v}}})), 'Unaffected Env.')}
+                               <div className="space-y-4 mt-6">
+                                   <div className="flex justify-between items-center">
+                                       <div>
+                                           <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">
+                                               IICRC Reference & HVAC Atmospheric Baselines
+                                           </h3>
+                                           <p className="text-[10px] text-slate-500">
+                                               Required for psychrometric grain depression validation and closed system verification.
+                                           </p>
+                                       </div>
+                                   </div>
+                                   <div className="grid md:grid-cols-2 gap-4">
+                                       {renderZoneInput(
+                                           logData.atmospherics.outside, 
+                                           (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, outside: {...p.atmospherics.outside, temp: v}}})), 
+                                           (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, outside: {...p.atmospherics.outside, rh: v}}})), 
+                                           "Outside Ambient",
+                                           "Exterior Atmospheric Reference",
+                                           <button
+                                               key="btn-weather"
+                                               type="button"
+                                               onClick={() => handleFillOutdoorWeather("form")}
+                                               disabled={isFetchingWeather}
+                                               className="flex items-center space-x-1 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/20 rounded-xl transition-all disabled:opacity-50"
+                                           >
+                                               <Cloud size={10} className={isFetchingWeather ? "animate-spin" : ""} />
+                                               <span>{isFetchingWeather ? "Fetching..." : "Fill Outdoor from Weather"}</span>
+                                           </button>
+                                       )}
+                                       {renderZoneInput(
+                                           logData.atmospherics.unaffected, 
+                                           (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, unaffected: {...p.atmospherics.unaffected, temp: v}}})), 
+                                           (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, unaffected: {...p.atmospherics.unaffected, rh: v}}})), 
+                                           "Unaffected Control",
+                                           "Structure Baseline Standard"
+                                       )}
+                                       {renderZoneInput(
+                                           logData.atmospherics.unaffectedHvac, 
+                                           (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, unaffectedHvac: {...p.atmospherics.unaffectedHvac, temp: v}}})), 
+                                           (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, unaffectedHvac: {...p.atmospherics.unaffectedHvac, rh: v}}})), 
+                                           "Unaffected HVAC Supply",
+                                           "Clean Zone Air Handler"
+                                       )}
+                                       {renderZoneInput(
+                                           logData.atmospherics.affectedHvac, 
+                                           (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, affectedHvac: {...p.atmospherics.affectedHvac, temp: v}}})), 
+                                           (v) => setLogData(p => ({...p, atmospherics: {...p.atmospherics, affectedHvac: {...p.atmospherics.affectedHvac, rh: v}}})), 
+                                           "Affected HVAC Return",
+                                           "Drying Chamber Return / Exhaust"
+                                       )}
+                                   </div>
                                </div>
 
                                <div className="space-y-1 pt-4 border-t border-white/5">
@@ -806,15 +1354,17 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
                               // Calculate sq footage for air mover suggestion
                               let sqFt = 0;
                               if (isChamber) {
-                                  const chamberRooms = project.rooms?.filter(r => (activeTab.entity as TabEntity).roomIds?.includes(r.id)) || [];
+                                  const chamber = activeTab.entity as DryingChamber;
+                                  const chamberRooms = project.rooms?.filter(r => chamber.roomIds?.includes(r.id)) || [];
                                   sqFt = chamberRooms.reduce((acc, r) => {
                                       const l = r.dimensions?.length || 0;
                                       const w = r.dimensions?.width || 0;
                                       return acc + (l * w);
                                   }, 0);
                               } else {
-                                  const l = (activeTab.entity as TabEntity).dimensions?.length || 0;
-                                  const w = (activeTab.entity as TabEntity).dimensions?.width || 0;
+                                  const room = activeTab.entity as Room;
+                                  const l = room.dimensions?.length || 0;
+                                  const w = room.dimensions?.width || 0;
                                   sqFt = l * w;
                               }
                               const estimatedAirMovers = sqFt > 0 ? Math.ceil(sqFt / 14) + 1 : 0;
@@ -856,7 +1406,7 @@ const DryingLogs: React.FC<DryingLogsProps> = ({ project, onUpdate }) => {
                                           (v) => setLogData(p => ({...p, atmospherics: { ...p.atmospherics, rooms: { ...p.atmospherics.rooms, [entityId]: { temp: v, rh: p.atmospherics.rooms[entityId]?.rh || '' } } }})),
                                           (v) => setLogData(p => ({...p, atmospherics: { ...p.atmospherics, rooms: { ...p.atmospherics.rooms, [entityId]: { temp: p.atmospherics.rooms[entityId]?.temp || '', rh: v } } }})),
                                           isChamber ? 'Chamber Atmospherics' : 'Room Atmospherics',
-                                          isChamber ? 'Combined Drying Zone' : ((activeTab.entity as TabEntity).roomType || 'General Area')
+                                          isChamber ? 'Combined Drying Zone' : ((activeTab.entity as Room).roomType || 'General Area')
                                       )}
 
                                       {/* Trends Visualization */}

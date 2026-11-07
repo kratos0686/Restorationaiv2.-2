@@ -31,7 +31,11 @@ import {
   Paperclip,
   Check,
   X,
+  HardDrive,
+  FileCheck,
 } from "lucide-react";
+import GoogleWorkspaceHub from "./GoogleWorkspaceHub";
+import JobLocationMap from "./JobLocationMap";
 import { useAppContext } from "../context/AppContext";
 import { getProjectById, updateProject } from "../services/api";
 import {
@@ -64,6 +68,8 @@ import { MoistureTrendWidget } from "./MoistureTrendWidget";
 import { DailySummaryWidget } from "./DailySummaryWidget";
 import { DashboardWidget } from "./DashboardWidget";
 import ReportTemplates from "./ReportTemplates";
+import { exportProjectJSON } from "../utils/xactimateExport";
+import { SyncStatusDrawer } from "./SyncStatusDrawer";
 import { FieldUpdateModal } from "./FieldUpdateModal";
 import ProjectDates from "./ProjectDates";
 import RiskAssessment from "./RiskAssessment";
@@ -71,6 +77,7 @@ import ErrorBoundary from "./ErrorBoundary";
 import Branding from "./Branding";
 import WaterMitigationDocumentation from "./WaterMitigationDocumentation";
 import ClientUpdatesLog from "./ClientUpdatesLog";
+import ProjectDocumentationCenter from "./ProjectDocumentationCenter";
 
 interface ProjectDetailsProps {
   isMobile?: boolean;
@@ -102,6 +109,8 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
     | "reports"
     | "checklists"
     | "client_portal"
+    | "workspace"
+    | "doc_templates"
   >("overview");
   const [showWalkthrough, setShowWalkthrough] = useState<RoomScan | null>(null);
   const [showFieldUpdateModal, setShowFieldUpdateModal] = useState(false);
@@ -386,17 +395,21 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                 </p>
               </div>
             </div>
-            <button 
-              onClick={() => setShowFieldUpdateModal(true)}
-              className="bg-brand-cyan text-slate-900 px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg flex items-center gap-1"
-            >
-              <Activity size={14} /> Update
-            </button>
+            <div className="flex items-center gap-2">
+              <SyncStatusDrawer compact />
+              <button 
+                onClick={() => setShowFieldUpdateModal(true)}
+                className="bg-brand-cyan text-slate-900 px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg flex items-center gap-1"
+              >
+                <Activity size={14} /> Update
+              </button>
+            </div>
           </div>
           {/* Horizontal Scrollable Tabs */}
           <div className="flex space-x-2 overflow-x-auto no-scrollbar pb-1">
             {[
               "Overview",
+              "Doc Templates",
               "Risk",
               "Tracking",
               "Checklists",
@@ -412,32 +425,42 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
               "Reference",
               "Client Portal",
               "Reports",
+              "Workspace",
             ].map((tab) => (
               <button
                 key={tab}
                 onClick={() =>
                   setActiveSubTab(
-                    tab.toLowerCase().replace(" ", "_") as
-                      | "overview"
-                      | "risk"
-                      | "tracking"
-                      | "scope"
-                      | "drying"
-                      | "photos"
-                      | "forms"
-                      | "predictive"
-                      | "reference"
-                      | "calculator"
-                      | "ar_mapping"
-                      | "tasks"
-                      | "equipment"
-                      | "room_readings"
-                      | "reports"
-                      | "checklists"
-                      | "client_portal"
+                    tab === "Doc Templates"
+                      ? "doc_templates"
+                      : (tab.toLowerCase().replace(" ", "_") as
+                          | "overview"
+                          | "risk"
+                          | "tracking"
+                          | "scope"
+                          | "drying"
+                          | "photos"
+                          | "forms"
+                          | "predictive"
+                          | "reference"
+                          | "calculator"
+                          | "ar_mapping"
+                          | "tasks"
+                          | "equipment"
+                          | "room_readings"
+                          | "reports"
+                          | "checklists"
+                          | "client_portal"
+                          | "workspace"
+                          | "doc_templates")
                   )
                 }
-                className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all ${activeSubTab === tab.toLowerCase().replace(" ", "_") ? "bg-brand-cyan text-slate-900" : "bg-white/5 text-slate-400"}`}
+                className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all ${
+                  (tab === "Doc Templates" && activeSubTab === "doc_templates") ||
+                  activeSubTab === tab.toLowerCase().replace(" ", "_")
+                    ? "bg-brand-cyan text-slate-900"
+                    : "bg-white/5 text-slate-400"
+                }`}
               >
                 {tab}
               </button>
@@ -482,8 +505,9 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                 </div>
               </div>
 
-              {/* Weather Info */}
+              {/* Weather & Location Info */}
               <WeatherWidget address={project.address} />
+              <JobLocationMap address={project.address} clientName={project.client} className="mt-4" />
 
               {/* Moisture Trend Widget */}
               <ProjectHealthSummary project={project} />
@@ -844,7 +868,14 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                       </div>
                     </div>
 
-                    <div className="pt-6">
+                    <div className="pt-6 space-y-3">
+                      <button
+                        onClick={() => setActiveSubTab("checklists")}
+                        className="w-full py-3.5 bg-brand-cyan/15 hover:bg-brand-cyan/25 border border-brand-cyan/40 text-brand-cyan rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center space-x-2 active:scale-95 transition-all"
+                      >
+                        <FileCheck size={18} />
+                        <span>Adaptive Mitigation Checklist & SOP</span>
+                      </button>
                       <button
                         onClick={() => setActiveTab("scanner")}
                         className="w-full py-4 bg-gradient-to-r from-brand-cyan to-blue-500 text-slate-900 rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-brand-cyan/20 flex items-center justify-center space-x-3 group active:scale-95 transition-all"
@@ -855,7 +886,7 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                         />
                         <span>Initiate Room Scan</span>
                       </button>
-                      <p className="text-[10px] text-slate-500 text-center mt-3 font-medium italic">
+                      <p className="text-[10px] text-slate-500 text-center mt-2 font-medium italic">
                         Capture spatial data and moisture mapping via image
                         scan.
                       </p>
@@ -931,14 +962,33 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
             />
           )}
           {activeSubTab === "forms" && (
-            <Forms onComplete={() => setActiveSubTab("overview")} />
+            <Forms
+              project={project}
+              onUpdate={handleUpdateProject}
+              onComplete={() => setActiveSubTab("overview")}
+            />
           )}
           {activeSubTab === "reference" && (
             <ReferenceGuide onBack={() => setActiveSubTab("overview")} />
           )}
-          {activeSubTab === "reports" && <ReportTemplates project={project} />}
+          {activeSubTab === "reports" && <ReportTemplates project={project} onUpdate={handleUpdateProject} />}
           {activeSubTab === "client_portal" && (
             <ClientUpdatesLog project={project} onUpdate={handleUpdateProject} />
+          )}
+          {activeSubTab === "workspace" && (
+            <div className="h-full">
+              <GoogleWorkspaceHub project={project} onBack={() => setActiveSubTab("overview")} />
+            </div>
+          )}
+          {activeSubTab === "doc_templates" && (
+            <div className="h-full -m-4">
+              <ProjectDocumentationCenter
+                project={project}
+                onUpdateProject={handleUpdateProject}
+                onBack={() => setActiveSubTab("overview")}
+                isMobile={true}
+              />
+            </div>
           )}
         </div>
 
@@ -1034,8 +1084,9 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
         </div>
 
         {!isSidebarCollapsed && (
-          <div className="mb-4">
+          <div className="mb-4 space-y-4">
             <WeatherWidget address={project.address} />
+            <JobLocationMap address={project.address} clientName={project.client} />
           </div>
         )}
 
@@ -1084,15 +1135,22 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
               isCollapsed={isSidebarCollapsed}
             />
             <NavButton
-              label="Checklists"
-              icon={<ListChecks size={18} />}
+              label="Smart Checklists"
+              icon={<ListChecks size={18} className="text-brand-cyan" />}
               active={activeSubTab === "checklists"}
               onClick={() => setActiveSubTab("checklists")}
               isCollapsed={isSidebarCollapsed}
             />
             <NavButton
-              label="Forms & Auth"
-              icon={<Pencil size={18} />}
+              label="Setup Templates"
+              icon={<FileCheck size={18} className="text-brand-cyan" />}
+              active={activeSubTab === "doc_templates"}
+              onClick={() => setActiveSubTab("doc_templates")}
+              isCollapsed={isSidebarCollapsed}
+            />
+            <NavButton
+              label="Digital Forms (e-Sign)"
+              icon={<Pencil size={18} className="text-emerald-400" />}
               active={activeSubTab === "forms"}
               onClick={() => setActiveSubTab("forms")}
               isCollapsed={isSidebarCollapsed}
@@ -1228,6 +1286,13 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
               onClick={() => setActiveSubTab("reports")}
               isCollapsed={isSidebarCollapsed}
             />
+            <NavButton
+              label="Google Workspace"
+              icon={<HardDrive size={18} className="text-blue-400" />}
+              active={activeSubTab === "workspace"}
+              onClick={() => setActiveSubTab("workspace")}
+              isCollapsed={isSidebarCollapsed}
+            />
           </div>
         </div>
 
@@ -1250,14 +1315,25 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-y-auto p-8 relative flex flex-col">
-        {/* Project Stage Stepper */}
-        <div className="flex items-center justify-end mb-4 shrink-0">
-          <button 
-            onClick={() => setShowFieldUpdateModal(true)}
-            className="bg-brand-cyan hover:bg-cyan-400 transition-colors text-slate-900 px-4 py-2 rounded-xl text-sm font-bold shadow-lg flex items-center gap-2"
-          >
-            <Activity size={16} /> Log Field Update
-          </button>
+        {/* Project Stage Stepper & Actions */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4 shrink-0">
+          <SyncStatusDrawer />
+          <div className="flex items-center space-x-3">
+            <button 
+              onClick={() => project && exportProjectJSON(project)}
+              className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 px-3.5 py-2 rounded-xl text-xs font-bold shadow-lg flex items-center gap-1.5 transition-colors"
+              title="Download full project JSON dossier (including reference readings, moisture pins, attached documents)"
+            >
+              <FileDown size={14} className="text-brand-cyan" />
+              <span>Export JSON</span>
+            </button>
+            <button 
+              onClick={() => setShowFieldUpdateModal(true)}
+              className="bg-brand-cyan hover:bg-cyan-400 transition-colors text-slate-900 px-4 py-2 rounded-xl text-sm font-bold shadow-lg flex items-center gap-2"
+            >
+              <Activity size={16} /> Log Field Update
+            </button>
+          </div>
         </div>
         {/* Project Stage Stepper */}
         <div className="mb-8 hidden lg:flex items-center justify-between bg-slate-900 border border-white/5 rounded-2xl p-2 shadow-lg shadow-black/20 shrink-0">
@@ -1839,6 +1915,26 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                   </h3>
                   <div className="space-y-2">
                     <button
+                      onClick={() => setActiveSubTab("checklists")}
+                      className="w-full py-2.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/50 rounded-lg text-xs font-bold text-left px-3 text-cyan-300 transition-all flex items-center justify-between shadow-[0_0_15px_rgba(6,182,212,0.2)]"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <FileCheck size={14} />
+                        <span>Adaptive Mitigation Checklist & SOP</span>
+                      </span>
+                      <span className="text-[9px] uppercase px-1.5 py-0.5 bg-cyan-500/30 rounded font-black">7-Phase + SOP</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveSubTab("doc_templates")}
+                      className="w-full py-2.5 bg-brand-cyan/15 hover:bg-brand-cyan/25 border border-brand-cyan/40 rounded-lg text-xs font-bold text-left px-3 text-brand-cyan transition-all flex items-center justify-between shadow-[0_0_15px_rgba(6,182,212,0.15)]"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <FileCheck size={14} />
+                        <span>Setup Templates (Intake / Scope / Checklist)</span>
+                      </span>
+                      <span className="text-[9px] uppercase px-1.5 py-0.5 bg-brand-cyan/20 rounded font-black">Pre-filled</span>
+                    </button>
+                    <button
                       onClick={() => setActiveSubTab("mitigation_docs")}
                       className="w-full py-2.5 bg-[#00d4aa]/15 hover:bg-[#00d4aa]/25 border border-[#00d4aa]/40 rounded-lg text-xs font-bold text-left px-3 text-[#00d4aa] transition-all flex items-center justify-between shadow-[0_0_15px_rgba(0,212,170,0.15)]"
                     >
@@ -1943,7 +2039,11 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
             <PredictiveAnalysis onBack={() => setActiveSubTab("overview")} />
           )}
           {activeSubTab === "forms" && (
-            <Forms onComplete={() => setActiveSubTab("overview")} />
+            <Forms
+              project={project}
+              onUpdate={handleUpdateProject}
+              onComplete={() => setActiveSubTab("overview")}
+            />
           )}
           {activeSubTab === "reference" && (
             <ReferenceGuide onBack={() => setActiveSubTab("overview")} />
@@ -1964,10 +2064,24 @@ const ProjectDetails: React.FC<ProjectDetailsProps> = ({
               onUpdate={handleUpdateProject}
             />
           )}
-          {activeSubTab === "reports" && <ReportTemplates project={project} />}
+          {activeSubTab === "reports" && <ReportTemplates project={project} onUpdate={handleUpdateProject} />}
           {activeSubTab === "client_portal" && (
             <div className="h-[calc(100vh-140px)]">
               <ClientUpdatesLog project={project} onUpdate={handleUpdateProject} />
+            </div>
+          )}
+          {activeSubTab === "workspace" && (
+            <div className="h-[calc(100vh-140px)] -m-8">
+              <GoogleWorkspaceHub project={project} onBack={() => setActiveSubTab("overview")} />
+            </div>
+          )}
+          {activeSubTab === "doc_templates" && (
+            <div className="h-[calc(100vh-140px)] -m-8">
+              <ProjectDocumentationCenter
+                project={project}
+                onUpdateProject={handleUpdateProject}
+                onBack={() => setActiveSubTab("overview")}
+              />
             </div>
           )}
         </div>

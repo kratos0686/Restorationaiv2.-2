@@ -10,12 +10,8 @@ const port = 3001;
 
 app.use(express.json({ limit: '50mb' }));
 
-if (!process.env.GEMINI_API_KEY) {
-  console.error('ERROR: GEMINI_API_KEY is not set in .env.local');
-  process.exit(1);
-}
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+const ai = new GoogleGenAI(apiKey ? { apiKey } : {});
 
 app.post('/api/gemini/generate', async (req: Request, res: Response) => {
   try {

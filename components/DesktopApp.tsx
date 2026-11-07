@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, Suspense } from 'react';
 import {
     LayoutDashboard, DollarSign, FolderOpen, BarChart3, Settings,
     Search, WifiOff, FileText, Image, Wind, ListChecks, LogOut,
-    Map, Plus, Users, Wrench, ClipboardList, ChevronLeft, ChevronRight, ChevronDown, Menu, X, Sparkles
+    Map, Plus, Users, Wrench, ClipboardList, ChevronLeft, ChevronRight, ChevronDown, Menu, X, Sparkles, HardDrive, FileCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppContext } from '../context/AppContext';
@@ -14,9 +14,10 @@ import PhotoDocumentation from './PhotoDocumentation';
 import EquipmentManager from './EquipmentManager';
 import TicSheet from './TicSheet';
 import WaterMitigationDocumentation from './WaterMitigationDocumentation';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
-import { updateProject } from '../services/api';
+import GoogleWorkspaceHub from './GoogleWorkspaceHub';
+import ProjectDocumentationCenter from './ProjectDocumentationCenter';
+import { handleFirestoreError, OperationType } from '../firebase';
+import { updateProject, getProjects } from '../services/api';
 
 import Billing from './Billing';
 import Reporting from './Reporting';
@@ -70,18 +71,13 @@ const DesktopApp: React.FC = () => {
         const loadProjects = async () => {
             if (currentUser?.companyId) {
                 try {
-                    const q = query(collection(db, 'projects'), where('companyId', '==', currentUser.companyId));
-                    const querySnapshot = await getDocs(q);
-                    const projectData: Project[] = [];
-                    querySnapshot.forEach((doc) => {
-                        projectData.push({ id: doc.id, ...doc.data() } as Project);
-                    });
+                    const projectData = await getProjects(currentUser.companyId);
                     setProjects(projectData);
                 } catch (error) {
                     if (error instanceof Error && error.message.includes('Missing or insufficient permissions')) {
                         handleFirestoreError(error, OperationType.GET, 'projects');
                     } else {
-                        console.error("Error fetching projects:", error);
+                        console.warn("Unable to fetch projects from remote, falling back to local:", error);
                     }
                 }
             }
@@ -136,6 +132,10 @@ const DesktopApp: React.FC = () => {
             );
         }
 
+        if (activeTab === 'google-workspace' && !selectedProjectId) {
+            return <GoogleWorkspaceHub project={null} onBack={() => setActiveTab('dashboard')} />;
+        }
+
         if (activeTab === 'task-manager') {
             if (!selectedProject) {
                 return (
@@ -156,7 +156,7 @@ const DesktopApp: React.FC = () => {
             );
         }
 
-        if (activeTab === 'losses' || (selectedProjectId && ['loss-detail', 'project', 'equipment', 'tic-sheet', 'photos', 'ar-mapping', 'mitigation-docs'].includes(activeTab))) {
+        if (activeTab === 'losses' || (selectedProjectId && ['loss-detail', 'project', 'equipment', 'tic-sheet', 'photos', 'ar-mapping', 'mitigation-docs', 'google-workspace', 'doc-templates'].includes(activeTab))) {
             if (!selectedProjectId) return <DesktopDashboard projects={projects} onProjectSelect={handleSelectProject} onUpdateProject={handleUpdateProject} />;
             if (!selectedProject) return <div className="p-8 text-center text-slate-500">Project not found.</div>;
 
@@ -169,15 +169,39 @@ const DesktopApp: React.FC = () => {
                         </div>
                         <div className="flex items-center space-x-1 p-1 bg-black/20 rounded-xl border border-white/5">
                             <ProjectTabButton icon={<FileText size={16} />} label="Details" active={activeTab === 'loss-detail'} onClick={() => setActiveTab('loss-detail')} />
+                            <ProjectTabButton icon={<FileCheck size={16} className="text-brand-cyan" />} label="Setup Docs" active={activeTab === 'doc-templates'} onClick={() => setActiveTab('doc-templates')} />
                             <ProjectTabButton icon={<Sparkles size={16} className="text-[#00d4aa]" />} label="AI Mitigation" active={activeTab === 'mitigation-docs'} onClick={() => setActiveTab('mitigation-docs')} />
                             <ProjectTabButton icon={<Image size={16} />} label="Photos" active={activeTab === 'photos'} onClick={() => setActiveTab('photos')} />
                             <ProjectTabButton icon={<Wind size={16} />} label="Equipment" active={activeTab === 'equipment'} onClick={() => setActiveTab('equipment')} />
                             <ProjectTabButton icon={<ListChecks size={16} />} label="Scope" active={activeTab === 'tic-sheet'} onClick={() => setActiveTab('tic-sheet')} />
                             <ProjectTabButton icon={<Map size={16} />} label="AR Mapping" active={activeTab === 'ar-mapping'} onClick={() => setActiveTab('ar-mapping')} />
+                            <ProjectTabButton icon={<HardDrive size={16} className="text-blue-400" />} label="Workspace" active={activeTab === 'google-workspace'} onClick={() => setActiveTab('google-workspace')} />
                         </div>
                     </header>
                     <div className="flex-1 overflow-y-auto">
                         {activeTab === 'loss-detail' && <ProjectDetails />}
+                        {activeTab === 'doc-templates' && (
+                            <div className="h-full">
+                                <ProjectDocumentationCenter 
+                                    project={selectedProject} 
+                                    onUpdateProject={async (updates) => {
+                                        const updatedProject = { ...selectedProject, ...updates };
+                                        setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+                                        try {
+                                            await updateProject(selectedProject.id, updates);
+                                        } catch (e) {
+                                            console.error("Failed to update project documentation templates", e);
+                                        }
+                                    }} 
+                                    onBack={() => setActiveTab('loss-detail')} 
+                                />
+                            </div>
+                        )}
+                        {activeTab === 'google-workspace' && (
+                            <div className="h-full">
+                                <GoogleWorkspaceHub project={selectedProject} onBack={() => setActiveTab('loss-detail')} />
+                            </div>
+                        )}
                         {activeTab === 'mitigation-docs' && (
                             <div className="h-full">
                                 <WaterMitigationDocumentation 
@@ -195,7 +219,7 @@ const DesktopApp: React.FC = () => {
                                 />
                             </div>
                         )}
-                        {activeTab === 'photos' && <div className="p-8 h-full"><PhotoDocumentation project={selectedProject} onStartScan={() => {}} /></div>}
+                        {activeTab === 'photos' && <div className="p-8 h-full"><PhotoDocumentation project={selectedProject} onStartScan={() => {}} onUpdate={(updates) => handleUpdateProject(selectedProject.id, updates)} /></div>}
                         {activeTab === 'equipment' && <div className="p-8 h-full"><EquipmentManager project={selectedProject} /></div>}
                         {activeTab === 'tic-sheet' && <TicSheet project={selectedProject} />}
                         {activeTab === 'ar-mapping' && (
@@ -250,6 +274,12 @@ const DesktopApp: React.FC = () => {
                             active={activeTab === 'dashboard'} 
                             onClick={() => setActiveTab('dashboard')} 
                         />
+                        <TopNavButton 
+                            label="Field Maps" 
+                            icon={<Map size={16} />} 
+                            active={activeTab === 'crew-dispatch'} 
+                            onClick={() => setActiveTab('crew-dispatch')} 
+                        />
                         <TopNavMenu 
                             label="Jobs" 
                             icon={<FolderOpen size={16} />} 
@@ -274,7 +304,7 @@ const DesktopApp: React.FC = () => {
                         <TopNavMenu 
                             label="Operations" 
                             icon={<Wrench size={16} />} 
-                            active={['billing', 'crew-dispatch', 'inventory', 'task-manager'].includes(activeTab)}
+                            active={['billing', 'crew-dispatch', 'inventory', 'task-manager', 'google-workspace'].includes(activeTab)}
                         >
                             {hasPermission('view_billing') && (
                                 <DropdownItem 
@@ -283,6 +313,11 @@ const DesktopApp: React.FC = () => {
                                     onClick={() => { setSelectedProjectId(null); setActiveTab('billing'); }} 
                                 />
                             )}
+                            <DropdownItem 
+                                label="Google Workspace" 
+                                icon={<HardDrive size={14} />} 
+                                onClick={() => { setSelectedProjectId(null); setActiveTab('google-workspace'); }} 
+                            />
                             <DropdownItem 
                                 label="Crew & Dispatch" 
                                 icon={<Users size={14} />} 
@@ -629,11 +664,10 @@ const TopNavMenu: React.FC<{
             {isOpen && (
                 <div className="absolute top-full lg:left-0 right-0 mt-2 w-56 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 zoom-in-95">
                     {React.Children.map(children, child => {
-                        if (React.isValidElement(child)) {
-                            return React.cloneElement(child as React.ReactElement<{ onClick?: () => void }>, {
+                        if (React.isValidElement<{ onClick?: () => void }>(child)) {
+                            return React.cloneElement(child, {
                                 onClick: () => {
-                                    const { onClick } = child.props as { onClick?: () => void };
-                                    onClick?.();
+                                    if (child.props.onClick) child.props.onClick();
                                     setIsOpen(false);
                                 }
                             });

@@ -1,11 +1,37 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Wind, Power, Clock, LayoutGrid, List, Calculator, ChevronRight, Plus, DollarSign, BrainCircuit, Loader2, ScanLine, Pencil } from 'lucide-react';
+import { 
+  Wind, 
+  Power, 
+  Clock, 
+  LayoutGrid, 
+  List, 
+  Calculator, 
+  ChevronRight, 
+  Plus, 
+  DollarSign, 
+  BrainCircuit, 
+  Loader2, 
+  ScanLine, 
+  Pencil,
+  Gauge,
+  Sparkles,
+  ShieldCheck,
+  CheckCircle2,
+  Box
+} from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { Project, PlacedEquipment, InventoryEquipment } from '../types';
 import { EventBus } from '../services/EventBus';
 import { getInventory, updateInventoryItem } from '../services/api';
 import QRScanner from './QRScanner';
+import { 
+  calculateRoomEquipmentSizing, 
+  calculateDehumidifierCapacity, 
+  calculateAirMoverCount, 
+  normalizeLossClass, 
+  EquipmentSizingRecommendation 
+} from '../utils/equipmentSizing';
 
 const EQUIPMENT_SPECS: Record<string, { amps: number, volts: number, cfm: number, type: string, dailyRate: number }> = {
   // LGR Dehumidifiers
@@ -73,6 +99,10 @@ const CIRCUIT_BREAKER_LIMIT_AMPS = 15;
 const EquipmentManager: React.FC<{project: Project, onUpdate?: (updates: Partial<Project>) => void}> = ({ project, onUpdate }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
+  const [isS500Open, setIsS500Open] = useState(false);
+  const [selectedS500RoomId, setSelectedS500RoomId] = useState<string>('all');
+  const [customCeilingHeight, setCustomCeilingHeight] = useState<number>(8);
+  const [customLossClass, setCustomLossClass] = useState<string>(project.lossClass || 'Class 2');
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [isAiRecommendationsOpen, setIsAiRecommendationsOpen] = useState(false);
@@ -89,6 +119,42 @@ const EquipmentManager: React.FC<{project: Project, onUpdate?: (updates: Partial
   const [tempHours, setTempHours] = useState<string>('');
 
   const [globalInventory, setGlobalInventory] = useState<InventoryEquipment[]>([]);
+
+  // Calculate IICRC S500 recommendations for selected room or entire structure
+  const s500Recommendation = useMemo(() => {
+    const rooms = project.rooms || [];
+    if (selectedS500RoomId !== 'all') {
+      const room = rooms.find(r => r.id === selectedS500RoomId);
+      if (room) {
+        return calculateRoomEquipmentSizing(
+          room.name,
+          {
+            length: room.dimensions?.length,
+            width: room.dimensions?.width,
+            height: customCeilingHeight
+          },
+          customLossClass
+        );
+      }
+    }
+
+    // Entire structure / All rooms combined
+    const totalSqFt = rooms.reduce((acc, r) => {
+      const l = r.dimensions?.length || 0;
+      const w = r.dimensions?.width || 0;
+      return acc + (l > 0 && w > 0 ? l * w : 200);
+    }, 0) || 500;
+
+    return calculateRoomEquipmentSizing(
+      'Entire Structure / All Chambers',
+      {
+        length: Math.round(Math.sqrt(totalSqFt)),
+        width: Math.round(Math.sqrt(totalSqFt)),
+        height: customCeilingHeight
+      },
+      customLossClass
+    );
+  }, [project.rooms, selectedS500RoomId, customCeilingHeight, customLossClass]);
 
   useEffect(() => {
     const fetchInv = async () => {
@@ -387,6 +453,229 @@ Output the advice formatting with clear bullet points. Keep it strictly related 
                   </div>
               ))}
           </div>
+      )}
+
+      {/* IICRC S500 Sizing Calculator Card */}
+      <div 
+        onClick={() => setIsS500Open(!isS500Open)} 
+        className={`${theme.card} p-5 rounded-[2rem] flex items-center justify-between cursor-pointer group active:scale-[0.98] transition-all hover:bg-white/5 border border-brand-cyan/20`}
+      >
+        <div className="flex items-center space-x-4">
+          <div className="p-3 rounded-2xl bg-brand-cyan/20 text-brand-cyan">
+            <Gauge size={24} />
+          </div>
+          <div>
+            <h3 className={`text-sm font-bold ${theme.text}`}>IICRC S500 Sizing Calculator</h3>
+            <p className={`text-[10px] ${theme.subtext}`}>
+              AHAM Pints/Day & Air Mover Auto-Recommendation
+            </p>
+          </div>
+        </div>
+        <ChevronRight size={18} className={`text-brand-cyan transition-transform ${isS500Open ? 'rotate-90' : ''}`} />
+      </div>
+
+      {isS500Open && (
+        <div className="mb-6 p-5 bg-slate-900/90 rounded-[2rem] border border-brand-cyan/30 space-y-5 shadow-2xl animate-in slide-in-from-top-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/10">
+            <div>
+              <span className="text-[10px] font-black uppercase text-brand-cyan tracking-wider block">ANSI/IICRC S500 Formula Engine</span>
+              <h4 className="text-sm font-bold text-white">Chamber Equipment Sizing Verification</h4>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Target:</span>
+              <select
+                value={selectedS500RoomId}
+                onChange={(e) => setSelectedS500RoomId(e.target.value)}
+                className="bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none focus:border-brand-cyan"
+              >
+                <option value="all">Entire Structure ({project.rooms?.length || 0} Rooms)</option>
+                {(project.rooms || []).map(r => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* S500 Inputs: Class of Loss & Ceiling Height */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">Class of Loss</label>
+              <select
+                value={customLossClass}
+                onChange={(e) => setCustomLossClass(e.target.value)}
+                className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs font-bold text-white outline-none focus:border-brand-cyan"
+              >
+                <option value="Class 1">Class 1 (Least / &lt;5% wet)</option>
+                <option value="Class 2">Class 2 (Significant / 5-40% wet)</option>
+                <option value="Class 3">Class 3 (Greatest / &gt;40% wet overhead)</option>
+                <option value="Class 4">Class 4 (Specialty / Low Permeance)</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">Ceiling Height</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  value={customCeilingHeight}
+                  onChange={(e) => setCustomCeilingHeight(parseFloat(e.target.value) || 8)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs font-bold text-white font-mono outline-none focus:border-brand-cyan"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-bold">ft</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase text-slate-500 block mb-1">Chamber Dimensions</label>
+              <div className="p-2.5 bg-black/40 border border-white/10 rounded-xl text-xs font-mono font-bold text-slate-300">
+                {s500Recommendation.sqFt} SF • {s500Recommendation.cuFt.toLocaleString()} cu.ft.
+              </div>
+            </div>
+          </div>
+
+          {/* S500 Results Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Dehumidifier Sizing Card */}
+            <div className="bg-gradient-to-br from-brand-cyan/10 to-slate-950 p-4 rounded-2xl border border-brand-cyan/30 flex flex-col justify-between">
+              <div>
+                <div className="flex justify-between items-start mb-2">
+                  <span className="text-[10px] font-black text-brand-cyan uppercase tracking-wider">Dehumidification</span>
+                  <span className="text-[9px] bg-brand-cyan/20 text-brand-cyan px-1.5 py-0.5 rounded font-bold uppercase font-mono">
+                    Divisor: {s500Recommendation.dehumidifier.divisor}
+                  </span>
+                </div>
+                <div className="flex items-baseline space-x-1.5 mb-1">
+                  <span className="text-3xl font-black text-white">{s500Recommendation.dehumidifier.ahamPintsPerDay}</span>
+                  <span className="text-xs font-bold text-brand-cyan">AHAM Pints/Day</span>
+                </div>
+                <p className="text-[10px] text-slate-400 font-mono leading-tight mb-3">
+                  {s500Recommendation.dehumidifier.formula}
+                </p>
+              </div>
+              <div className="pt-2 border-t border-white/5 text-[10px] text-slate-300 space-y-1">
+                <div className="flex justify-between">
+                  <span>Standard 70-Pt LGRs:</span>
+                  <span className="font-bold text-white">{s500Recommendation.dehumidifier.recommendedUnits.standard70Pt} unit(s)</span>
+                </div>
+                <div className="flex justify-between font-bold text-brand-cyan">
+                  <span>Large 110-Pt LGRs:</span>
+                  <span>{s500Recommendation.dehumidifier.recommendedUnits.large110Pt} unit(s)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Air Mover Sizing Card */}
+            <div className="bg-gradient-to-br from-indigo-500/10 to-slate-950 p-4 rounded-2xl border border-indigo-500/30 flex flex-col justify-between">
+              <div>
+                <div className="flex justify-between items-start mb-2">
+                  <span className="text-[10px] font-black text-indigo-400 uppercase tracking-wider">Air Movers</span>
+                  <span className="text-[9px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded font-bold uppercase font-mono">
+                    1 per 50-70 SF
+                  </span>
+                </div>
+                <div className="flex items-baseline space-x-1.5 mb-1">
+                  <span className="text-3xl font-black text-white">{s500Recommendation.airMovers.recommendedCount}</span>
+                  <span className="text-xs font-bold text-indigo-400">Air Movers</span>
+                </div>
+                <p className="text-[10px] text-slate-400 font-mono leading-tight mb-3">
+                  {s500Recommendation.airMovers.formula}
+                </p>
+              </div>
+              <div className="pt-2 border-t border-white/5 text-[10px] text-slate-300 space-y-1">
+                <div className="flex justify-between">
+                  <span>Minimum Coverage:</span>
+                  <span className="font-bold text-white">{s500Recommendation.airMovers.minCount} units</span>
+                </div>
+                <div className="flex justify-between font-bold text-indigo-400">
+                  <span>Optimal S500 Placement:</span>
+                  <span>{s500Recommendation.airMovers.recommendedCount} units</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Air Filtration / HEPA Scrubber Card */}
+            <div className="bg-gradient-to-br from-emerald-500/10 to-slate-950 p-4 rounded-2xl border border-emerald-500/30 flex flex-col justify-between">
+              <div>
+                <div className="flex justify-between items-start mb-2">
+                  <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider">Air Filtration (AFDs)</span>
+                  <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-bold uppercase font-mono">
+                    {s500Recommendation.airScrubbers.airChangesPerHour} ACH
+                  </span>
+                </div>
+                <div className="flex items-baseline space-x-1.5 mb-1">
+                  <span className="text-3xl font-black text-white">{s500Recommendation.airScrubbers.cfmRequired}</span>
+                  <span className="text-xs font-bold text-emerald-400">CFM Required</span>
+                </div>
+                <p className="text-[10px] text-slate-400 font-mono leading-tight mb-3">
+                  {s500Recommendation.cuFt.toLocaleString()} cu.ft. × 6 ACH ÷ 60 min
+                </p>
+              </div>
+              <div className="pt-2 border-t border-white/5 text-[10px] text-slate-300 space-y-1">
+                <div className="flex justify-between font-bold text-emerald-400">
+                  <span>500 CFM HEPA Scrubbers:</span>
+                  <span>{s500Recommendation.airScrubbers.recommendedUnits} unit(s)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Deployment CTA */}
+          {onUpdate && (
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const roomTarget = selectedS500RoomId !== 'all' 
+                    ? (project.rooms?.find(r => r.id === selectedS500RoomId)?.name || 'General')
+                    : 'General';
+
+                  const dehuModel = 'Dri-Eaz LGR 7000XLi';
+                  const airMoverModel = 'Dri-Eaz Stealth AV3000';
+                  const dehuCount = Math.max(1, s500Recommendation.dehumidifier.recommendedUnits.large110Pt);
+                  const amCount = s500Recommendation.airMovers.recommendedCount;
+
+                  const newPlaced: PlacedEquipment[] = [];
+                  for (let i = 0; i < dehuCount; i++) {
+                    newPlaced.push({
+                      id: `dehu-${Date.now()}-${i}`,
+                      type: 'Dehumidifier',
+                      model: dehuModel,
+                      room: roomTarget,
+                      status: 'Running',
+                      hoursLogged: 0,
+                      deployedDate: new Date().toISOString()
+                    });
+                  }
+                  for (let i = 0; i < amCount; i++) {
+                    newPlaced.push({
+                      id: `am-${Date.now()}-${i}`,
+                      type: 'Air Mover',
+                      model: airMoverModel,
+                      room: roomTarget,
+                      status: 'Running',
+                      hoursLogged: 0,
+                      deployedDate: new Date().toISOString()
+                    });
+                  }
+
+                  onUpdate({
+                    equipment: [...equipment, ...newPlaced]
+                  });
+
+                  EventBus.publish(
+                    'com.restorationai.equipment.deployed.s500',
+                    { room: roomTarget, dehuCount, amCount },
+                    project.id,
+                    `S500 Setup Applied: ${dehuCount} Dehu & ${amCount} Air Movers assigned to ${roomTarget}`,
+                    'success'
+                  );
+                }}
+                className="flex items-center space-x-2 bg-brand-cyan hover:bg-cyan-400 text-slate-950 font-black px-4 py-2.5 rounded-xl uppercase text-xs tracking-wider transition-all shadow-lg shadow-brand-cyan/20 active:scale-95"
+              >
+                <CheckCircle2 size={16} />
+                <span>Deploy S500 Recommended Fleet to {selectedS500RoomId !== 'all' ? (project.rooms?.find(r => r.id === selectedS500RoomId)?.name || 'Room') : 'Structure'}</span>
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       <div onClick={handleToggleRecommendations} className={`${theme.card} p-5 rounded-[2rem] flex items-center justify-between cursor-pointer group active:scale-[0.98] transition-all hover:bg-white/5`}>

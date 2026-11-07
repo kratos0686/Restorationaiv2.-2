@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan to lock mobile layout mode at initial app load (preventing mobile landscape rotation from unmounting MobileApp into DesktopApp) and replace the blocked browser confirm() in ARScanner's Discard & Start Fresh flow with an inline confirmation prompt.",
+  "updatedAt":  "2026-10-28T21:32:30.808436635Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

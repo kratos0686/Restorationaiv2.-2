@@ -5,9 +5,10 @@ import { useAppContext } from '../context/AppContext';
 import { User, UserRole } from '../types';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from '../firebase';
+import { WORKSPACE_SCOPES, setCachedAccessToken } from '../services/googleWorkspace';
 
 const OAuthHandler: React.FC = () => {
-  const { setAuthentication, setCurrentUser } = useAppContext();
+  const { setAuthentication, setCurrentUser, setAccessToken } = useAppContext();
   const [authStage, setAuthStage] = useState<'idle' | 'exchanging_token' | 'complete'>('idle');
   const [statusMessage, setStatusMessage] = useState('Initializing Secure Login...');
 
@@ -17,7 +18,18 @@ const OAuthHandler: React.FC = () => {
     
     try {
       const provider = new GoogleAuthProvider();
+      WORKSPACE_SCOPES.forEach(scope => provider.addScope(scope));
+      provider.setCustomParameters({
+        prompt: 'consent',
+        access_type: 'online'
+      });
       const result = await signInWithPopup(auth, provider);
+      
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        setAccessToken(credential.accessToken);
+        setCachedAccessToken(credential.accessToken);
+      }
       
       const user = result.user;
       

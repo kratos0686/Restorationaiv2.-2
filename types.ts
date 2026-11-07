@@ -92,12 +92,29 @@ export interface LineItem {
     category?: string;
 }
 
+export type MediaPhaseCategory = 'before' | 'during' | 'after' | 'specific_damage';
+
+export interface VideoTimestampAnnotation {
+  id: string;
+  timestampSec: number;
+  label: string;
+  damageType?: string;
+  notes?: string;
+}
+
 export interface Photo {
   id: string;
   url: string;
+  originalUrl?: string;
   thumbnailUrl?: string;
   timestamp: number;
   geolocation?: { lat: number, lng: number };
+  caption?: string;
+  phaseCategory?: MediaPhaseCategory;
+  damageType?: string;
+  roomName?: string;
+  isAnnotated?: boolean;
+  videoAnnotations?: VideoTimestampAnnotation[];
   tags: string[];
   notes: string;
   aiInsight?: string;
@@ -118,8 +135,13 @@ export interface VideoLog {
   url: string;
   thumbnail?: string;
   timestamp: number;
+  caption?: string;
   description: string;
+  phaseCategory?: MediaPhaseCategory;
+  damageType?: string;
+  roomName?: string;
   tags?: string[];
+  videoAnnotations?: VideoTimestampAnnotation[];
   linkedRoomId?: string;
   linkedTaskId?: string;
   linkedEquipmentId?: string;
@@ -201,6 +223,12 @@ export interface ChecklistItem {
   completed: boolean;
   notes?: string;
   materials?: string[];
+  iicrcStandard?: string;
+  category?: string;
+  priority?: 'low' | 'normal' | 'high' | 'critical';
+  fieldType?: 'moisture' | 'equipment' | 'chemical' | 'text' | 'boolean' | 'none';
+  fieldData?: Record<string, unknown>;
+  isAdaptive?: boolean;
 }
 
 export interface PhaseSignature {
@@ -209,6 +237,8 @@ export interface PhaseSignature {
   clientName: string;
   clientSignature: string;
   date: number;
+  signeeRole?: string;
+  ipStamp?: string;
 }
 
 export interface TimeEntry {
@@ -226,6 +256,8 @@ export interface TimeEntry {
 export interface DigitalChecklistPhase {
   id: string;
   title: string;
+  subtitle?: string;
+  iconName?: string;
   items: ChecklistItem[];
   signature?: PhaseSignature;
   status: 'pending' | 'in_progress' | 'completed';
@@ -264,6 +296,10 @@ export interface TrackedMaterial {
     readings: MaterialReading[]; // History of readings
     status: 'Wet' | 'Dry' | 'Removed';
     demoQuantity?: number; // Quantity removed/demoed
+    pinNumber?: number;
+    pinX?: number; // 0 to 1 fraction of the plan width
+    pinY?: number; // 0 to 1 fraction of the plan height
+    pinStatus?: 'wet' | 'drying' | 'dry' | 'stalled';
 }
 // ---------------------------------------------------------
 
@@ -403,9 +439,127 @@ export interface Project {
   ticSheet?: unknown[];
   timeEntries?: TimeEntry[];
   digitalChecklists?: DigitalChecklistPhase[];
+  adaptiveConfig?: AdaptiveMitigationConfig;
+  chemicalLogs?: ChemicalTreatmentLog[];
+  equipmentLogs?: EquipmentDeployedLog[];
+  moistureMatrix?: MoistureReadingEntry[];
+  smartForms?: SmartDigitalForm[];
   iicrcReport?: string;
   xactimateReport?: string;
+  documentationTemplates?: ProjectDocumentationTemplates;
+  referenceReadings?: ReferenceReading[];
+  moisturePins?: MoistureMapPin[];
+  attachedDocuments?: AttachedDocument[];
+  reportProfiles?: ReportProfile[];
+  activeReportProfileId?: string;
+  signedAuthorizations?: SignedAuthorization[];
+  carrierPacketConfig?: CarrierPacketConfig;
 }
+
+// --- NEW WATER-MITIGATION DOCUMENTATION TYPES ---
+export type ReferenceReadingZone = 'outside' | 'unaffected' | 'unaffected-hvac' | 'affected-hvac';
+
+export interface ReferenceReading {
+  id?: string;
+  zone: ReferenceReadingZone;
+  temp: number; // Fahrenheit
+  rh: number; // %
+  timestamp: number;
+  photoId?: string;
+  gpp: number; // Grains Per Pound (calculated)
+  dewPoint: number; // Dew Point °F (calculated)
+  notes?: string;
+}
+
+export type MoisturePinStatus = 'wet' | 'drying' | 'dry' | 'stalled';
+
+export interface MoistureMapPin {
+  id: string;
+  pinNumber: number;
+  materialId: string;
+  x: number; // 0 to 1 fraction of floor plan
+  y: number; // 0 to 1 fraction of floor plan
+  status?: MoisturePinStatus;
+  label?: string;
+  roomName?: string;
+}
+
+export type AttachedDocumentType = 'lab results' | 'invoices' | 'estimates' | 'other';
+
+export interface AttachedDocument {
+  id: string;
+  name: string;
+  type: AttachedDocumentType;
+  fileReference: string; // URL, data URI, or path
+  fileType?: string;
+  uploadedAt?: number;
+  notes?: string;
+  fileSize?: string;
+}
+
+export interface ReportProfile {
+  id: string;
+  name: string;
+  description?: string;
+  targetAudience?: 'Carrier' | 'Property Manager' | 'Adjuster' | 'Homeowner' | 'General';
+  isBuiltIn?: boolean;
+  sectionIds: string[]; // Ordered list of section IDs
+  labelOverrides?: Record<string, string>; // sectionId -> custom label
+  requiredFields?: string[]; // Field keys that must be present on Project
+}
+
+export type SignedAuthorizationFormType =
+  | 'work_authorization'
+  | 'antimicrobial_consent'
+  | 'equipment_responsibility'
+  | 'certificate_of_satisfaction';
+
+export type SignedAuthorizationRole =
+  | 'Homeowner'
+  | 'Property Manager'
+  | 'Commercial Tenant'
+  | 'Authorized Agent'
+  | 'Lead Technician';
+
+export interface SignedAuthorization {
+  id: string;
+  formType: SignedAuthorizationFormType;
+  title: string;
+  signerName: string;
+  signerRole: SignedAuthorizationRole;
+  signatureDataUrl: string;
+  signedAt: number;
+  verificationHash: string;
+  clausesAccepted: string[];
+}
+
+export type SyncQueueOperation =
+  | 'UPDATE_READINGS'
+  | 'UPDATE_PINS'
+  | 'UPDATE_EQUIPMENT'
+  | 'ADD_SIGNATURE'
+  | 'UPDATE_DOCUMENTS'
+  | 'UPDATE_PROFILES'
+  | 'FULL_PROJECT_SAVE';
+
+export interface SyncQueueItem {
+  id: string;
+  projectId: string;
+  operation: SyncQueueOperation;
+  payload: Partial<Project>;
+  queuedAt: number;
+  status: 'pending' | 'syncing' | 'synced' | 'failed';
+  retryCount: number;
+  description?: string;
+}
+
+export interface CarrierPacketConfig {
+  profileId: string;
+  includeFloorplanMap: boolean;
+  includeSignatures: boolean;
+  includeAttachedDocs: boolean;
+}
+// -------------------------------------------------
 
 export type LossFile = Project;
 
@@ -584,5 +738,318 @@ export type Tab =
     | 'inventory'
     | 'crew-dispatch'
     | 'task-manager'
-    | 'ar-mapping';
+    | 'ar-mapping'
+    | 'google-workspace'
+    | 'doc-templates';
+
+// ============================================================================
+// Automated Water Mitigation Project Setup & Documentation Templates
+// ============================================================================
+
+export interface ClientIntakeForm {
+  id: string;
+  templateType: 'client_intake';
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'draft' | 'completed' | 'signed';
+  // Pre-filled client & property info
+  clientName: string;
+  clientPhone: string;
+  clientEmail: string;
+  propertyAddress: string;
+  lossDate: string;
+  intakeDate: string;
+  // Pre-filled insurance details
+  insuranceCarrier: string;
+  policyNumber: string;
+  claimNumber: string;
+  adjusterName?: string;
+  adjusterPhone?: string;
+  adjusterEmail?: string;
+  // Intake specifics
+  waterCategory: WaterCategory;
+  lossClass: LossClass;
+  waterSourceDescription: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  occupancyStatus: 'Owner Occupied' | 'Tenant Occupied' | 'Vacant' | 'Commercial';
+  propertyType: 'Single Family' | 'Multi-Family' | 'Condo' | 'Commercial' | 'Industrial';
+  yearBuilt: string;
+  pre1985Structure: boolean;
+  waterTurnedOff: boolean;
+  powerStatus: 'Active' | 'Shut Off at Main' | 'Partial / Tripped Breakers';
+  specialAccessInstructions: string;
+  technicianNotes: string;
+  // Authorization & Sign-off
+  workAuthorizationSigned: boolean;
+  signatureDataUrl?: string;
+  signedDate?: string;
+  signedByName?: string;
+}
+
+export interface ScopeOutlineItem {
+  id: string;
+  category: 'Containment & Protection' | 'Water Extraction' | 'Controlled Demolition' | 'Antimicrobial & Cleaning' | 'Drying Equipment' | 'Monitoring & Verification';
+  task: string;
+  description: string;
+  standardReference: string; // e.g. "IICRC S500 Sec 10.4", "IICRC S500 Sec 12.2"
+  status: 'pending' | 'in_progress' | 'completed' | 'not_applicable';
+  notes?: string;
+  estimatedQuantity?: string;
+}
+
+export interface ProjectScopeOutline {
+  id: string;
+  templateType: 'scope_outline';
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'draft' | 'approved' | 'in_progress' | 'completed';
+  // Pre-filled header
+  clientName: string;
+  propertyAddress: string;
+  date: string;
+  waterCategory: WaterCategory;
+  lossClass: LossClass;
+  // Technical parameters
+  targetDryStandard: string;
+  estimatedDryingDurationDays: number;
+  containmentLevel: 'Source Containment' | 'Mini-Containment' | 'Full Critical Barrier with Negative Air' | 'None Required';
+  dehumidifierCapacityTarget: string; // e.g. "110-140 AHAM pints/day (Class 2)"
+  airMoverCountEstimated: number;
+  hepaAirScrubberRequired: boolean;
+  scopeItems: ScopeOutlineItem[];
+  technicianSignOff?: {
+    techName: string;
+    date: string;
+    signed: boolean;
+  };
+}
+
+export interface DamageAssessmentChecklistItem {
+  id: string;
+  section: 'Source & Containment' | 'Health, Life & Safety' | 'Building Assemblies & Moisture' | 'HVAC & Airflow' | 'Contents & Valuables' | 'Environmental & Regulatory';
+  item: string;
+  description: string;
+  status: 'pass' | 'fail' | 'action_required' | 'not_inspected';
+  severity?: 'normal' | 'moderate' | 'critical';
+  notes?: string;
+  photoRef?: string;
+}
+
+export interface InitialDamageAssessmentChecklist {
+  id: string;
+  templateType: 'damage_assessment';
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'draft' | 'completed' | 'reviewed';
+  // Pre-filled header
+  clientName: string;
+  propertyAddress: string;
+  assessmentDate: string;
+  inspectorName: string;
+  waterCategory: WaterCategory;
+  lossClass: LossClass;
+  // Rapid assessment summary
+  overallConditionRating: 'Minor' | 'Moderate' | 'Severe / Catastrophic';
+  sourceIdentified: boolean;
+  sourceDescription: string;
+  standingWaterDepthInches: number;
+  visibleMicrobialGrowth: boolean;
+  microbialDescription?: string;
+  structuralIntegrityCompromised: boolean;
+  electricalHazardsPresent: boolean;
+  checklistItems: DamageAssessmentChecklistItem[];
+  summaryConclusion: string;
+  recommendations: string[];
+}
+
+export interface ProjectDocumentationTemplates {
+  autoGeneratedAt: string;
+  clientIntake: ClientIntakeForm;
+  scopeOutline: ProjectScopeOutline;
+  damageAssessment: InitialDamageAssessmentChecklist;
+}
+
+// ============================================================================
+// Smart Adaptive Mitigation Checklists & Digital Forms
+// ============================================================================
+
+export type MitigationProjectType = 
+  | 'Residential - Single Family'
+  | 'Residential - Multi-Family / Condo'
+  | 'Commercial - Office / Corporate'
+  | 'Commercial - Retail / Hospitality'
+  | 'Commercial - Healthcare / Clinic'
+  | 'Commercial - Institutional / School'
+  | 'Industrial / Warehouse Facility';
+
+export type MitigationLossSource = 
+  | 'Clean Water Pipe Burst / Supply Line'
+  | 'Appliance Failure / Overflow'
+  | 'Groundwater Infiltration / Overland Flood'
+  | 'Sewage Backup / Blackwater Backflow'
+  | 'Roof Leak / Storm Intrusion'
+  | 'Fire Sprinkler System Discharge'
+  | 'Microbial / Mold Amplification';
+
+export interface ChemicalTreatmentLog {
+  id: string;
+  productName: string;
+  epaRegNumber: string;
+  activeIngredient: string;
+  applicationMethod: 'ULV Cold Fog' | 'Low-Pressure Coarse Spray' | 'Direct Surface Saturation' | 'Electrostatic Spray' | 'HEPA Wipe Down';
+  targetAreas: string;
+  dwellTimeMinutes: number;
+  sqFtTreated: number;
+  appliedBy: string;
+  appliedAt: string;
+  ppeUsed: string[];
+  clientNotifiedOfReEntry: boolean;
+  notes?: string;
+}
+
+export interface EquipmentDeployedLog {
+  id: string;
+  equipmentType: 'Air Mover (Axial/Centrifugal)' | 'LGR Dehumidifier' | 'Desiccant Dehumidifier' | 'HEPA Air Scrubber' | 'Injectidry Wall/Floor System' | 'Air Scrubber - Negative Air';
+  model: string;
+  serialNumber?: string;
+  roomLocation: string;
+  amperage: number;
+  circuitVerified: boolean;
+  targetRunHours: number;
+  actualHours?: number;
+  deployedDate: string;
+  status: 'Running' | 'Standby' | 'Decontaminated & Removed';
+}
+
+export interface MoistureReadingEntry {
+  id: string;
+  roomName: string;
+  materialName: string;
+  readingType: 'Penetrating Pin' | 'Non-Destructive RF' | 'RH Probe' | 'Concrete In-Situ';
+  dryGoalMC: number;
+  baselineWetMC: number;
+  currentMC: number;
+  dateRecorded: string;
+  isDry: boolean;
+  locationDetails?: string;
+}
+
+export interface MitigationSOPStep {
+  phase: string;
+  standardRef: string;
+  directive: string;
+  criticalControlPoint: string;
+  requiredPPE: string;
+}
+
+export interface MitigationSOPSummary {
+  sopId: string;
+  title: string;
+  generatedAt: string;
+  projectType: MitigationProjectType;
+  lossSource: MitigationLossSource;
+  waterCategory: WaterCategory;
+  lossClass: LossClass;
+  executiveDirective: string;
+  containmentAndAirflowProtocol: string;
+  demolitionAndSalvageThreshold: string;
+  antimicrobialAndMoldProtocol: string;
+  dryingTargetAndVerification: string;
+  steps: MitigationSOPStep[];
+}
+
+export interface AdaptiveMitigationConfig {
+  projectType: MitigationProjectType;
+  lossSource: MitigationLossSource;
+  waterCategory: WaterCategory;
+  lossClass: LossClass;
+  affectedSqFt: number;
+  standingWaterDepthInches: number;
+  moldIdentified: boolean;
+  pre1985Structure: boolean;
+  occupancyStatus: 'Owner Occupied' | 'Tenant Occupied' | 'Vacant' | 'Commercial Active Operations';
+  containmentRequired: boolean;
+  negativeAirRequired: boolean;
+  powerSource: 'Grid Utility (Standard)' | 'Portable Generator' | 'Spider Box / Temporary Panel';
+  // Key Job Metadata Fields
+  clientName?: string;
+  clientPhone?: string;
+  clientEmail?: string;
+  propertyAddress?: string;
+  inspectionDate?: string;
+  technicianName?: string;
+  affectedAreas?: string[];
+  materialsImpacted?: string[];
+  equipmentUsed?: string[];
+  completionSignOff?: {
+    technicianName: string;
+    technicianSignature?: string;
+    clientName: string;
+    clientSignature?: string;
+    signedAt: string;
+    notes?: string;
+    auditHash?: string;
+  };
+  generatedSOP?: MitigationSOPSummary;
+}
+
+export interface SmartDigitalForm {
+  id: string;
+  formType: 
+    | 'work_authorization' 
+    | 'daily_mitigation_log'
+    | 'chemical_treatment_disclosure' 
+    | 'structural_demo_release' 
+    | 'equipment_responsibility' 
+    | 'certificate_of_satisfaction';
+  title: string;
+  subtitle: string;
+  category: 'Legal & Authorization' | 'Field Compliance' | 'Safety & Chemicals' | 'Closeout';
+  status: 'draft' | 'ready_for_signature' | 'signed' | 'archived';
+  createdAt: string;
+  updatedAt: string;
+  data: {
+    clientName: string;
+    propertyAddress: string;
+    claimNumber?: string;
+    insuranceCarrier?: string;
+    policyNumber?: string;
+    technicianName: string;
+    projectType: string;
+    lossSource: string;
+    waterCategory: string;
+    lossClass: string;
+    summaryNotes?: string;
+    moistureReadingsSummary?: MoistureReadingEntry[];
+    equipmentDeployedSummary?: EquipmentDeployedLog[];
+    chemicalTreatmentsSummary?: ChemicalTreatmentLog[];
+    customClauses?: { id: string; title: string; text: string; accepted: boolean }[];
+    deductibleAmount?: string;
+    emergencyRateApproved?: boolean;
+    authorizedDollarLimit?: string;
+    demoCutHeightInches?: number;
+    containmentBarrierLevel?: string;
+    wasteDisposalManifestVerified?: boolean;
+  };
+  technicianSignature?: {
+    name: string;
+    title: string;
+    signatureDataUrl: string;
+    signedAt: string;
+    ipStamp?: string;
+  };
+  clientSignature?: {
+    name: string;
+    role: 'Property Owner' | 'Tenant' | 'Property Manager' | 'Authorized Representative';
+    signatureDataUrl: string;
+    signedAt: string;
+    ipStamp?: string;
+  };
+}
+
+
 

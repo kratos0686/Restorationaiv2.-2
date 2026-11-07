@@ -143,13 +143,13 @@ describe('MobileApp', () => {
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 
-  it('toggles to Time Clock when the last nav button is clicked', () => {
+  it('toggles to Task Manager when the last nav button is clicked', () => {
     const ctx = makeCtx();
     vi.mocked(useAppContext).mockReturnValue(ctx as unknown as ReturnType<typeof useAppContext>);
     render(<MobileApp />);
     const nav = screen.getByRole('navigation');
     const buttons = nav.querySelectorAll('button');
     fireEvent.click(buttons[buttons.length - 1]);
-    expect(ctx.setActiveTab).toHaveBeenCalledWith('time-clock');
+    expect(ctx.setActiveTab).toHaveBeenCalledWith('task-manager');
   });
 });

@@ -8,6 +8,7 @@ import {
   RoomScan,
   ProjectStage
 } from '../types';
+import { generateDefaultProjectTemplates, ensureProjectDocumentationTemplates } from '../services/projectTemplateAutomation';
 
 // --- Multi-Tenancy Mock Data ---
 
@@ -231,7 +232,7 @@ export const getProjects = async (companyId?: string): Promise<Project[]> => {
   await apiDelay(300);
   const allProjects = loadProjectsFromStorage();
   if (companyId) {
-      return allProjects.filter(p => p.companyId === companyId);
+      return allProjects.filter(p => p.companyId === companyId).map(ensureProjectDocumentationTemplates);
   }
   return []; // Return empty if no company context provided
 };
@@ -239,13 +240,24 @@ export const getProjects = async (companyId?: string): Promise<Project[]> => {
 export const getProjectById = async (id: string): Promise<Project | null> => {
   await apiDelay(200);
   const projects = loadProjectsFromStorage();
-  return projects.find(p => p.id === id) || null;
+  const p = projects.find(proj => proj.id === id);
+  return p ? ensureProjectDocumentationTemplates(p) : null;
 };
 
 export const addProject = async (projectData: Partial<Project>, companyId: string): Promise<Project> => {
   await apiDelay(400);
   const projects = loadProjectsFromStorage();
   const newId = `P-${Math.floor(Math.random() * 9000) + 1000}`;
+  const docTemplates = projectData.documentationTemplates || generateDefaultProjectTemplates({
+    client: projectData.client,
+    address: projectData.address,
+    lossDate: projectData.lossDate,
+    insurance: projectData.insurance,
+    claimNumber: projectData.claimNumber,
+    waterCategory: projectData.waterCategory,
+    lossClass: projectData.lossClass,
+  });
+
   const newProject: Project = {
     ...projectData,
     id: newId,
@@ -268,7 +280,8 @@ export const addProject = async (projectData: Partial<Project>, companyId: strin
     roomScans: [],
     videos: [],
     ticSheet: [],
-    complianceChecks: { asbestos: 'not_tested', aiChecklist: [] }
+    complianceChecks: { asbestos: 'not_tested', aiChecklist: [] },
+    documentationTemplates: docTemplates
   };
   saveProjectsToStorage([newProject, ...projects]);
   return newProject;

@@ -26,7 +26,8 @@ export class IntelligenceRouter {
 
   constructor(ctx?: { customerId: string; jobId: string }) {
     this.ctx = { customerId: ctx?.customerId || "unknown", jobId: ctx?.jobId || "unknown", step: "unknown", model: "unknown" };
-    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    this.ai = new GoogleGenAI(apiKey ? { apiKey } : {});
   }
 
   private pickBestModel(complexity: TaskComplexity): string {

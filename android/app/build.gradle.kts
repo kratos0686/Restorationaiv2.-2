@@ -9,6 +9,7 @@ plugins {
 // Android Module Build Configuration
 apply(plugin = "com.android.application")
 apply(plugin = "org.jetbrains.kotlin.android")
+apply(plugin = "org.jetbrains.kotlin.plugin.compose")
 apply(plugin = "kotlin-kapt")
 apply(plugin = "dagger.hilt.android.plugin")
 apply(plugin = "com.google.gms.google-services")
@@ -97,6 +98,10 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+
+    // Google Maps Platform
+    implementation("com.google.android.gms:play-services-maps:19.0.0")
+    implementation("com.google.maps.android:maps-compose:4.4.1")
 }
 
 kapt {

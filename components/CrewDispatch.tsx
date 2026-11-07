@@ -11,7 +11,7 @@ import { db } from '../firebase';
 import { useAppContext } from '../context/AppContext';
 import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, useAdvancedMarkerRef } from '@vis.gl/react-google-maps';
 
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_PLATFORM_KEY || "";
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_PLATFORM_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
 const hasValidKey = Boolean(GOOGLE_MAPS_API_KEY) && GOOGLE_MAPS_API_KEY !== 'YOUR_API_KEY';
 
 interface CrewDispatchProps {
@@ -177,7 +177,14 @@ const CrewDispatch: React.FC<CrewDispatchProps> = ({ projects }) => {
                     setCrews(crewData);
                 }
             } catch (error) {
-                console.error("Error fetching crew:", error);
+                console.warn("Unable to fetch crew from remote, using local crew roster:", error);
+                const mockTechnicians: CrewMember[] = [
+                    { id: 'tech1', name: 'Alex Rivera', email: 'alex@restoration.ai', role: 'Technician', companyId: currentUser.companyId, permissions: [], status: 'Available' },
+                    { id: 'tech2', name: 'Sarah Chen', email: 'sarah@restoration.ai', role: 'Technician', companyId: currentUser.companyId, permissions: [], status: 'On Job', activeJobId: projects[0]?.id },
+                    { id: 'tech3', name: 'Mike Miller', email: 'mike@restoration.ai', role: 'Technician', companyId: currentUser.companyId, permissions: [], status: 'Available' },
+                    { id: 'tech4', name: 'Jordan Smith', email: 'jordan@restoration.ai', role: 'Technician', companyId: currentUser.companyId, permissions: [], status: 'Off Duty' },
+                ];
+                setCrews(mockTechnicians);
             } finally {
                 setIsLoading(false);
             }

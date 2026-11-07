@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MapPin, CheckSquare, Camera, ScanLine, ChevronRight, Settings, Clock } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
-import { getProjects } from '../services/api';
+import { getProjects, subscribeToProjects } from '../services/api';
 import { Project, Tab } from '../types';
 
 const MobileDashboard: React.FC = () => {
@@ -10,36 +10,44 @@ const MobileDashboard: React.FC = () => {
   const [checklistItems, setChecklistItems] = useState<{id: string, text: string, projectId: string, projectInfo: string}[]>([]);
 
   useEffect(() => {
-    const fetchJobs = async () => {
-      try {
-        if (currentUser?.companyId) {
-            const data = await getProjects(currentUser.companyId);
-            let active = (data as Project[]).filter(p => !p.status?.toLowerCase().includes('completed'));
-            
-            if (currentUser?.role === 'Technician') {
-                active = active.filter(p => 
-                    p.assignedTeam?.some(member => 
-                        member.toLowerCase() === currentUser.name.toLowerCase() || 
-                        member === currentUser.id
-                    )
-                );
+    let unsubscribe: (() => void) | undefined;
+    const loadJobs = async () => {
+      if (currentUser?.companyId) {
+        // Fallback fetch first for seeding
+        await getProjects(currentUser.companyId);
+        unsubscribe = subscribeToProjects(currentUser.companyId, (data) => {
+          let active = data.filter(p => !p.status?.toLowerCase().includes('completed'));
+          if (currentUser?.role === 'Technician') {
+            active = active.filter(p => 
+              p.assignedTeam?.some(member => 
+                member.toLowerCase() === currentUser.name.toLowerCase() || 
+                member.toLowerCase() === currentUser.id.toLowerCase()
+              )
+            );
+          }
+          setAssignedJobs(active);
+          
+          const items: {id: string, text: string, projectId: string, projectInfo: string}[] = [];
+          active.forEach(p => {
+            if (p.tasks) {
+              p.tasks.filter(t => !t.completed).forEach(t => {
+                items.push({
+                  id: t.id,
+                  text: t.text,
+                  projectId: p.id,
+                  projectInfo: p.client || p.id
+                });
+              });
             }
-            setAssignedJobs(active);
-            
-            // Mock pending checklist items
-            const mockChecklist = active.slice(0, 3).map(p => ({
-                id: `chk-${p.id}`,
-                text: 'Record Daily Moisture Readings',
-                projectId: p.id,
-                projectInfo: p.client
-            }));
-            setChecklistItems(mockChecklist);
-        }
-      } catch (e) {
-          console.error("Failed to load projects", e);
+          });
+          setChecklistItems(items);
+        });
       }
     };
-    fetchJobs();
+    loadJobs();
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [currentUser]);
 
   const handleLaunchJob = (id: string) => {
@@ -98,7 +106,12 @@ const MobileDashboard: React.FC = () => {
             <h2 className="text-sm font-bold text-white uppercase tracking-widest flex items-center">
                 <MapPin size={14} className="mr-2 text-brand-cyan" /> Dispatch Locations
             </h2>
-            <span className="text-xs text-slate-500 font-bold">{assignedJobs.length} Assigned</span>
+            <button 
+                onClick={() => handleQuickLaunch('crew-dispatch')}
+                className="text-xs text-brand-cyan font-bold hover:underline flex items-center gap-1"
+            >
+                Field Map <ChevronRight size={14} />
+            </button>
         </div>
         
         <div className="space-y-3">

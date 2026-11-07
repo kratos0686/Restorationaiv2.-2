@@ -269,4 +269,85 @@ describe('ARMapping', () => {
     render(<ARMapping project={project} onUpdate={onUpdate} />);
     expect(screen.getByText('Moisture Zone Alpha')).toBeInTheDocument();
   });
+
+  // ── AR Room Scanning, Calculations & Tic Sheet Sync ───────────────────────────
+
+  it('calculates room square footage and linear wall footage in AR view and displays them', () => {
+    render(<ARMapping project={makeProject()} onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByText('AR View'));
+
+    // Check that AR Spatial Scanner card is visible with SF and LF meters
+    expect(screen.getByText(/AR Spatial Scanner/i)).toBeInTheDocument();
+    expect(screen.getByText(/Square Footage/i)).toBeInTheDocument();
+    expect(screen.getByText(/Linear Walls/i)).toBeInTheDocument();
+    expect(screen.getByText('SF')).toBeInTheDocument();
+    expect(screen.getByText('LF')).toBeInTheDocument();
+  });
+
+  it('pushes calculated square footage and linear wall footage to Tic Sheet line items when push button is clicked', () => {
+    render(<ARMapping project={makeProject()} onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByText('AR View'));
+
+    // Find and click the push to Tic Sheet button
+    const pushButton = screen.getByRole('button', { name: /Push .* to Tic Sheet/i });
+    expect(pushButton).toBeInTheDocument();
+    fireEvent.click(pushButton);
+
+    // Verify onUpdate was called with new line items including SF and LF items
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lineItems: expect.arrayContaining([
+          expect.objectContaining({ code: 'WTR EXTW', category: 'Water Mitigation' }),
+          expect.objectContaining({ code: 'WTR GRD', category: 'Water Mitigation' }),
+          expect.objectContaining({ code: 'WTR DRYW', category: 'Demolition & Remediation' }),
+          expect.objectContaining({ code: 'WTR BASE', category: 'Demolition & Remediation' }),
+        ]),
+        totalCost: expect.any(Number),
+        ticSheet: expect.any(Array),
+      }),
+    );
+  });
+
+  it('allows pushing area measurements directly to Tic Sheet from sidebar', () => {
+    const project = makeProject({
+      arMapping: {
+        markers: [],
+        areas: [
+          {
+            id: 'area-1',
+            label: 'Living Room Affected Area',
+            points: [{ x: 10, y: 10 }, { x: 50, y: 10 }, { x: 50, y: 50 }, { x: 10, y: 50 }],
+            type: 'affected',
+            color: '#ef4444',
+            timestamp: 100,
+            sqFeet: 250,
+            linearFeet: 64,
+          },
+        ],
+      },
+    });
+
+    render(<ARMapping project={project} onUpdate={onUpdate} />);
+
+    // Click on area polygon in SVG to select it
+    const polygon = document.querySelector('polygon');
+    expect(polygon).not.toBeNull();
+    if (polygon) {
+      fireEvent.click(polygon);
+    }
+
+    // Now the sidebar has the Push Area to Tic Sheet button
+    const pushAreaBtn = screen.getByText(/Push Area to Tic Sheet/i);
+    expect(pushAreaBtn).toBeInTheDocument();
+    fireEvent.click(pushAreaBtn);
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lineItems: expect.arrayContaining([
+          expect.objectContaining({ code: 'WTR EXTW', quantity: 250 }),
+          expect.objectContaining({ code: 'WTR DRYW', quantity: 64 }),
+        ]),
+      }),
+    );
+  });
 });

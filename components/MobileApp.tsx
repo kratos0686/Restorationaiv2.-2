@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { 
-  Plus, Sparkles, Search, LayoutDashboard, FolderOpen, ClipboardList, Clock
+  Plus, Sparkles, Search, LayoutDashboard, FolderOpen, ClipboardList, Map as MapIcon
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import Dashboard from './Dashboard';
@@ -15,7 +15,10 @@ import Downloads from './Downloads';
 import ARScanner from './ARScanner';
 import EquipmentManager from './EquipmentManager';
 import GlobalTaskManager from './GlobalTaskManager';
+import CrewDispatch from './CrewDispatch';
 import WaterMitigationDocumentation from './WaterMitigationDocumentation';
+import GoogleWorkspaceHub from './GoogleWorkspaceHub';
+import ProjectDocumentationCenter from './ProjectDocumentationCenter';
 import { useAppContext } from '../context/AppContext';
 import { RoomScan, Project } from '../types';
 import { getProjectById, getProjects } from '../services/api';
@@ -112,8 +115,23 @@ const MobileApp: React.FC = () => {
                         onBack={() => setActiveTab('loss-detail')} 
                     />
                 ) : <div className="p-8 text-center text-slate-500">Select a loss first.</div>;
+            case 'doc-templates':
+                return project ? (
+                    <ProjectDocumentationCenter 
+                        project={project} 
+                        onUpdateProject={async (updates) => {
+                            setProject(prev => prev ? { ...prev, ...updates } : null);
+                        }} 
+                        onBack={() => setActiveTab('loss-detail')} 
+                        isMobile={true}
+                    />
+                ) : <div className="p-8 text-center text-slate-500">Select a loss first.</div>;
             case 'task-manager':
                 return <GlobalTaskManager projects={projects} onSelectProject={(id) => { setSelectedProjectId(id); setActiveTab('loss-detail'); }} />;
+            case 'crew-dispatch':
+                return <CrewDispatch projects={projects} />;
+            case 'google-workspace':
+                return <GoogleWorkspaceHub project={project} onBack={() => setActiveTab(selectedProjectId ? 'loss-detail' : 'dashboard')} />;
             default:
                 return <MobileDashboard />;
         }
@@ -177,18 +195,18 @@ const MobileApp: React.FC = () => {
                     </button>
                     
                     <div className={`w-full overflow-hidden transition-all duration-300 ${isNavVisible ? 'h-16 opacity-100' : 'h-0 opacity-0'}`}>
-                        <nav className="h-16 bg-[#0b0d14]/90 backdrop-blur-2xl border border-white/10 rounded-[2rem] flex justify-between items-center px-6 shadow-2xl">
-                            <NavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={24} strokeWidth={2.5} />} />
-                            <NavButton active={activeTab === 'losses'} onClick={() => setActiveTab('losses')} icon={<FolderOpen size={24} strokeWidth={2.5} />} />
+                        <nav className="h-16 bg-[#0b0d14]/90 backdrop-blur-2xl border border-white/10 rounded-[2rem] flex justify-between items-center px-4 shadow-2xl">
+                            <NavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={22} strokeWidth={2.5} />} />
+                            <NavButton active={activeTab === 'losses'} onClick={() => setActiveTab('losses')} icon={<FolderOpen size={22} strokeWidth={2.5} />} />
                             
-                            <div className="relative mx-2 z-10">
-                                <button onClick={() => setActiveTab('new-loss')} className="w-12 h-12 bg-[#00d4aa] rounded-full flex items-center justify-center text-[#0b0d14] shadow-[0_0_15px_rgba(0,212,170,0.4)] active:scale-95 transition-transform hover:scale-105">
-                                    <Plus size={24} strokeWidth={3} />
+                            <div className="relative mx-1 z-10">
+                                <button onClick={() => setActiveTab('new-loss')} className="w-11 h-11 bg-[#00d4aa] rounded-full flex items-center justify-center text-[#0b0d14] shadow-[0_0_15px_rgba(0,212,170,0.4)] active:scale-95 transition-transform hover:scale-105">
+                                    <Plus size={22} strokeWidth={3} />
                                 </button>
                             </div>
 
-                            <NavButton active={activeTab === 'task-manager'} onClick={() => setActiveTab('task-manager')} icon={<ClipboardList size={24} strokeWidth={2.5} />} />
-                            <NavButton active={activeTab === 'time-clock'} onClick={() => setActiveTab('time-clock')} icon={<Clock size={24} strokeWidth={2.5} />} />
+                            <NavButton active={activeTab === 'crew-dispatch'} onClick={() => setActiveTab('crew-dispatch')} icon={<MapIcon size={22} strokeWidth={2.5} />} />
+                            <NavButton active={activeTab === 'task-manager'} onClick={() => setActiveTab('task-manager')} icon={<ClipboardList size={22} strokeWidth={2.5} />} />
                         </nav>
                     </div>
                 </div>

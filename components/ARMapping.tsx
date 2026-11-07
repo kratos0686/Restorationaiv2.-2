@@ -1,9 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Webcam from 'react-webcam';
-import { Map, Camera, Upload, X, MapPin, AlertTriangle, Thermometer, Box, Layers, MousePointer2, Save, Trash2, Palette, Check, ArrowRight, Power, PowerOff, Search, Settings, Eye, EyeOff, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Tag, Download, FileImage, FileCode2, Crosshair, PenTool, Maximize, Plus, Play, Gauge } from 'lucide-react';
+import { Map, Camera, Upload, X, MapPin, AlertTriangle, Thermometer, Box, Layers, MousePointer2, Save, Trash2, Palette, Check, ArrowRight, Power, PowerOff, Search, Settings, Eye, EyeOff, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Tag, Download, FileImage, FileCode2, Crosshair, PenTool, Maximize, Plus, Play, Gauge, FileSpreadsheet, CheckCircle2, Zap } from 'lucide-react';
 import { Project, ARMarker, ARMappingData, ARArea, ARMeasurement, RoomScan, RoomMaterials } from '../types';
-
-type DemoScanMaterials = { flooring?: string; wall?: string; trim?: string };
 import { GoogleGenAI, Type } from '@google/genai';
 import { EventBus } from '../services/EventBus';
 import WalkthroughViewer from './WalkthroughViewer';
@@ -12,6 +10,16 @@ interface ARMappingProps {
   project: Project;
   onUpdate: (updates: Partial<Project>) => void;
 }
+
+const DEFAULT_ZONE_DIMENSIONS: Record<string, { length: number; width: number; height: number }> = {
+  'Entryway': { length: 8.0, width: 6.0, height: 8.0 },
+  'Living Room': { length: 18.5, width: 14.0, height: 8.0 },
+  'Hallway': { length: 16.0, width: 4.5, height: 8.0 },
+  'Kitchen': { length: 14.0, width: 12.0, height: 8.0 },
+  'Bathroom': { length: 9.5, width: 7.0, height: 8.0 },
+  'Master Bedroom': { length: 16.0, width: 13.5, height: 8.0 },
+  'Basement Room A': { length: 14.0, width: 12.0, height: 8.0 },
+};
 
 const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
   const [viewMode, setViewMode] = useState<'plan' | 'ar'>('plan');
@@ -60,6 +68,41 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
   const [featurePoints, setFeaturePoints] = useState<{ id: string; x: number; y: number; wx: string; wz: string; opacity: number }[]>([]);
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
   const [currentZone, setCurrentZone] = useState('Entryway');
+  const [isManualZone, setIsManualZone] = useState(false);
+
+  // Real-time Room Scanning & Dimension Calculation State
+  const [roomDimensions, setRoomDimensions] = useState<{ length: number; width: number; height: number }>({
+    length: 15.0,
+    width: 12.0,
+    height: 8.0,
+  });
+  const [autoPushToTicSheet, setAutoPushToTicSheet] = useState(true);
+  const autoPushToTicSheetRef = useRef(autoPushToTicSheet);
+  useEffect(() => {
+    autoPushToTicSheetRef.current = autoPushToTicSheet;
+  }, [autoPushToTicSheet]);
+
+  const [lastPushedNotification, setLastPushedNotification] = useState<{
+    sqft: number;
+    linearFeet: number;
+    roomName: string;
+    time: number;
+  } | null>(null);
+  const [showTicSheetPreview, setShowTicSheetPreview] = useState(false);
+
+  // Real-time room calculations for scanning
+  const liveSqft = useMemo(() => {
+    return Math.max(1, Math.round(roomDimensions.length * roomDimensions.width));
+  }, [roomDimensions.length, roomDimensions.width]);
+
+  const liveLinearFeet = useMemo(() => {
+    return Math.max(1, Math.round((2 * (roomDimensions.length + roomDimensions.width)) * 10) / 10);
+  }, [roomDimensions.length, roomDimensions.width]);
+
+  const liveWallSurfaceSqft = useMemo(() => {
+    return Math.round(liveLinearFeet * roomDimensions.height);
+  }, [liveLinearFeet, roomDimensions.height]);
+
   const CACHE_KEY = `ar-scan-photos-${project.id}`;
   const [capturedPhotos, setCapturedPhotos] = useState<{ id: string; zone: string; timestamp: number; url?: string }[]>(() => {
       try {
@@ -208,13 +251,16 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
 
          const zones = ['Entryway', 'Living Room', 'Hallway', 'Kitchen', 'Bathroom'];
          const simZone = zones[Math.floor(Date.now() / 8000) % zones.length];
-         if (simZone !== currentZone) {
+         if (!isManualZone && simZone !== currentZone) {
              setCurrentZone(simZone);
+             if (DEFAULT_ZONE_DIMENSIONS[simZone]) {
+               setRoomDimensions(DEFAULT_ZONE_DIMENSIONS[simZone]);
+             }
          }
       }, 800);
       return () => clearInterval(interval);
     }
-  }, [viewMode, currentZone]);
+  }, [viewMode, currentZone, isManualZone]);
 
   const currentZoneRef = useRef(currentZone);
   useEffect(() => { currentZoneRef.current = currentZone; }, [currentZone]);
@@ -222,6 +268,18 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
   const panStartRef = useRef<{ x: number } | null>(null);
   const simulatedPanRef = useRef(0);
   const lastCapturePanRef = useRef(0);
+
+  const liveMeasurementsRef = useRef({ liveSqft, liveLinearFeet, height: roomDimensions.height });
+  useEffect(() => {
+    liveMeasurementsRef.current = { liveSqft, liveLinearFeet, height: roomDimensions.height };
+  }, [liveSqft, liveLinearFeet, roomDimensions.height]);
+
+  const pushMeasurementsRef = useRef<((params: {
+    roomName: string;
+    sqft: number;
+    linearFeet: number;
+    height?: number;
+  }) => void) | null>(null);
 
   // Auto Capture Logic
   useEffect(() => {
@@ -242,6 +300,14 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
          const url = webcamRef.current?.getScreenshot() || undefined;
          setCapturedPhotos(prev => [...prev, { id: `photo-${Date.now()}`, zone: z, timestamp: Date.now(), url }]);
          EventBus.publish('com.restorationai.capture', { zone: z }, undefined, `Auto-captured photo for ${z}`, 'success');
+         if (autoPushToTicSheetRef.current && pushMeasurementsRef.current) {
+           pushMeasurementsRef.current({
+             roomName: z,
+             sqft: liveMeasurementsRef.current.liveSqft,
+             linearFeet: liveMeasurementsRef.current.liveLinearFeet,
+             height: liveMeasurementsRef.current.height
+           });
+         }
          // update the checkpoint for the next pan calculation
          lastCapturePanRef.current = Math.abs(simulatedPanRef.current) + deviceAlpha;
          simulatedPanRef.current = 0; // reset horizontal drag offset
@@ -410,7 +476,8 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
 
     const updatedAreas = areas.map(a => ({
       ...a,
-      sqFeet: calculateAreaSqFeet(a.points, newScale)
+      sqFeet: calculateAreaSqFeet(a.points, newScale),
+      linearFeet: calculatePerimeterLinearFeet(a.points, newScale)
     }));
 
     const updatedMeasurements = measurements.map(m => {
@@ -451,6 +518,160 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
     return Math.round(sqPercent / (scale * scale));
   };
 
+  const calculatePerimeterLinearFeet = (points: {x:number, y:number}[], scale: number) => {
+    if (!scale || points.length < 2) return 0;
+    let perimeterPct = 0;
+    for (let i = 0; i < points.length; i++) {
+      const j = (i + 1) % points.length;
+      const dx = points[j].x - points[i].x;
+      const dy = points[j].y - points[i].y;
+      perimeterPct += Math.sqrt(dx * dx + dy * dy);
+    }
+    return Math.round((perimeterPct / scale) * 10) / 10;
+  };
+
+  const handleZoneSelect = (newZone: string) => {
+    setCurrentZone(newZone);
+    setIsManualZone(true);
+    const existingScan = project.roomScans?.find(s => s.roomName.toLowerCase() === newZone.toLowerCase());
+    if (existingScan?.dimensions) {
+      setRoomDimensions({
+        length: existingScan.dimensions.length || 15.0,
+        width: existingScan.dimensions.width || 12.0,
+        height: existingScan.dimensions.height || 8.0
+      });
+    } else if (DEFAULT_ZONE_DIMENSIONS[newZone]) {
+      setRoomDimensions(DEFAULT_ZONE_DIMENSIONS[newZone]);
+    }
+  };
+
+  const pushMeasurementsToTicSheet = (params: {
+    roomName: string;
+    sqft: number;
+    linearFeet: number;
+    height?: number;
+  }) => {
+    const { roomName, sqft, linearFeet, height = 8.0 } = params;
+    if ((!sqft || sqft <= 0) && (!linearFeet || linearFeet <= 0)) {
+      alert("Cannot push empty measurements (both SF and LF are 0).");
+      return;
+    }
+
+    const currentLineItems = project.lineItems || [];
+    const normalizedSqft = Math.max(1, Math.round(sqft));
+    const normalizedLf = Math.max(1, Math.round(linearFeet * 10) / 10);
+
+    const targetItems = [
+      {
+        id: `tic-extw-${roomName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`,
+        code: 'WTR EXTW',
+        description: `Water Extraction & Structural Floor Drying - ${roomName}`,
+        quantity: normalizedSqft,
+        rate: 0.75,
+        total: Math.round(normalizedSqft * 0.75 * 100) / 100,
+        category: 'Water Mitigation',
+        tags: [roomName, 'AR Scanned', 'Floor SF']
+      },
+      {
+        id: `tic-grd-${roomName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now() + 1}`,
+        code: 'WTR GRD',
+        description: `Apply Botanical Anti-Microbial Agent to Floor Surface - ${roomName}`,
+        quantity: normalizedSqft,
+        rate: 0.45,
+        total: Math.round(normalizedSqft * 0.45 * 100) / 100,
+        category: 'Water Mitigation',
+        tags: [roomName, 'AR Scanned', 'Floor SF']
+      },
+      {
+        id: `tic-dryw-${roomName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now() + 2}`,
+        code: 'WTR DRYW',
+        description: `Drywall Flood Cut & Cavity Inspection (2ft Cut) - ${roomName}`,
+        quantity: normalizedLf,
+        rate: 8.50,
+        total: Math.round(normalizedLf * 8.50 * 100) / 100,
+        category: 'Demolition & Remediation',
+        tags: [roomName, 'AR Scanned', 'Wall LF']
+      },
+      {
+        id: `tic-base-${roomName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now() + 3}`,
+        code: 'WTR BASE',
+        description: `Tear Out Wet Baseboard & Prep In-Wall Drying - ${roomName}`,
+        quantity: normalizedLf,
+        rate: 1.35,
+        total: Math.round(normalizedLf * 1.35 * 100) / 100,
+        category: 'Demolition & Remediation',
+        tags: [roomName, 'AR Scanned', 'Wall LF']
+      }
+    ];
+
+    const targetCodes = new Set(['WTR EXTW', 'WTR GRD', 'WTR DRYW', 'WTR BASE']);
+    const nonMatchingExisting = currentLineItems.filter(item => {
+      const isSameRoom = item.description?.includes(roomName) || item.tags?.includes(roomName);
+      const isTargetCode = item.code && targetCodes.has(item.code);
+      return !(isSameRoom && isTargetCode);
+    });
+
+    const updatedLineItems = [...nonMatchingExisting, ...targetItems];
+    const updatedTotalCost = updatedLineItems.reduce((acc, item) => acc + (item.total || 0), 0);
+
+    const existingScans = project.roomScans || [];
+    const scanIndex = existingScans.findIndex(s => s.roomName.toLowerCase() === roomName.toLowerCase());
+    const updatedRoomScans = [...existingScans];
+    const newScanRecord: RoomScan = {
+      scanId: scanIndex >= 0 ? existingScans[scanIndex].scanId : `scan-${Date.now()}`,
+      roomName,
+      floorPlanSvg: '',
+      dimensions: {
+        length: roomDimensions.length,
+        width: roomDimensions.width,
+        height,
+        sqft: normalizedSqft
+      },
+      placedPhotos: existingScans[scanIndex]?.placedPhotos || [],
+      materials: existingScans[scanIndex]?.materials || ({
+        flooring: 'Drywall & Subfloor Assembly',
+        wall: 'Gypsum Board 1/2"',
+        trim: 'Baseboard 3-1/4"'
+      } as RoomMaterials)
+    };
+
+    if (scanIndex >= 0) {
+      updatedRoomScans[scanIndex] = newScanRecord;
+    } else {
+      updatedRoomScans.push(newScanRecord);
+    }
+
+    onUpdate({
+      lineItems: updatedLineItems,
+      totalCost: Math.round(updatedTotalCost * 100) / 100,
+      ticSheet: updatedLineItems,
+      roomScans: updatedRoomScans
+    });
+
+    setLastPushedNotification({
+      sqft: normalizedSqft,
+      linearFeet: normalizedLf,
+      roomName,
+      time: Date.now()
+    });
+
+    EventBus.publish(
+      'com.restorationai.ticsheet.updated',
+      {
+        projectId: project.id,
+        roomName,
+        sqft: normalizedSqft,
+        linearFeet: normalizedLf,
+        itemsCount: targetItems.length,
+        totalCost: updatedTotalCost
+      },
+      project.id,
+      `Pushed ${normalizedSqft} SF & ${normalizedLf} LF for ${roomName} directly to Tic Sheet!`,
+      'success'
+    );
+  };
+  pushMeasurementsRef.current = pushMeasurementsToTicSheet;
+
   const confirmArea = () => {
     const colorMap = {
       'affected': '#ef4444',
@@ -460,8 +681,10 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
     };
     
     let sqFeet;
+    let linearFeet;
     if (arData.scale) {
       sqFeet = calculateAreaSqFeet(currentAreaPoints, arData.scale);
+      linearFeet = calculatePerimeterLinearFeet(currentAreaPoints, arData.scale);
     }
     
     const newArea: ARArea = {
@@ -471,7 +694,8 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
       type: draftAreaType as 'affected' | 'mitigated' | 'safe',
       color: colorMap[draftAreaType] || '#ef4444',
       timestamp: Date.now(),
-      sqFeet
+      sqFeet,
+      linearFeet
     };
 
     onUpdate({
@@ -480,6 +704,15 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
         areas: [...areas, newArea]
       }
     });
+
+    if (autoPushToTicSheet && (sqFeet || linearFeet)) {
+      pushMeasurementsToTicSheet({
+        roomName: newArea.label,
+        sqft: sqFeet || 0,
+        linearFeet: linearFeet || 0
+      });
+    }
+
     setCurrentAreaPoints([]);
     setInteractionMode('select');
     setSelectedArea(newArea);
@@ -542,6 +775,7 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
         const newA = { ...a, ...updates };
         if (updates.points && arData.scale) {
           newA.sqFeet = calculateAreaSqFeet(updates.points, arData.scale);
+          newA.linearFeet = calculatePerimeterLinearFeet(updates.points, arData.scale);
         }
         return newA;
       }
@@ -557,6 +791,7 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
       const newSel = { ...selectedArea, ...updates };
       if (updates.points && arData.scale) {
         newSel.sqFeet = calculateAreaSqFeet(updates.points, arData.scale);
+        newSel.linearFeet = calculatePerimeterLinearFeet(updates.points, arData.scale);
       }
       setSelectedArea(newSel as ARArea);
     }
@@ -1275,6 +1510,186 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
                              )}
                         </div>
                     </div>
+                </div>
+
+                {/* Live Spatial Room Scanner & Tic Sheet Push HUD Card */}
+                <div className="absolute bottom-4 right-4 md:bottom-8 md:right-8 z-30 pointer-events-auto max-w-sm w-[calc(100%-2rem)] md:w-96">
+                  <div className="bg-slate-950/90 border border-brand-cyan/40 rounded-3xl p-4 md:p-5 shadow-2xl backdrop-blur-xl space-y-3.5">
+                    {/* Header */}
+                    <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-2.5 h-2.5 rounded-full bg-brand-cyan animate-pulse" />
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-brand-cyan block">AR Spatial Scanner</span>
+                          <span className="text-[8px] text-slate-400 font-mono">Live Lidar & Perimeter Odometry</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-1.5">
+                        <span className="text-[9px] uppercase font-bold text-slate-400">Auto-Push</span>
+                        <button
+                          type="button"
+                          onClick={() => setAutoPushToTicSheet(!autoPushToTicSheet)}
+                          className={`w-7 h-4 rounded-full p-0.5 transition-colors ${autoPushToTicSheet ? 'bg-emerald-500' : 'bg-slate-700'}`}
+                          title={autoPushToTicSheet ? 'Auto-push to Tic Sheet enabled' : 'Auto-push to Tic Sheet disabled'}
+                        >
+                          <div className={`w-3 h-3 bg-white rounded-full transition-transform ${autoPushToTicSheet ? 'translate-x-3' : 'translate-x-0'}`} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Room Selector */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[9px] font-bold text-slate-400">
+                        <span className="uppercase tracking-wider">Scanning Zone: <strong className="text-white">{currentZone}</strong></span>
+                        <span className="text-emerald-400 font-mono text-[8px]">Tracking Active</span>
+                      </div>
+                      <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                        {['Entryway', 'Living Room', 'Kitchen', 'Bathroom', 'Master Bedroom', 'Basement Room A', 'Hallway'].map((zone) => (
+                          <button
+                            key={zone}
+                            type="button"
+                            onClick={() => handleZoneSelect(zone)}
+                            className={`px-2 py-1 rounded-lg text-[9px] font-bold whitespace-nowrap transition-all ${currentZone === zone ? 'bg-brand-cyan text-slate-950 font-black shadow-sm' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
+                          >
+                            {zone}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Live Calculations Grid: SQFT & Linear Wall Footage */}
+                    <div className="grid grid-cols-2 gap-2.5 pt-0.5">
+                      {/* Square Footage Card */}
+                      <div className="bg-slate-900/95 border border-brand-cyan/30 rounded-2xl p-2.5 flex flex-col justify-between relative overflow-hidden">
+                        <div className="flex justify-between items-start">
+                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Square Footage</span>
+                          <span className="text-[7px] font-mono text-cyan-400 bg-cyan-400/10 px-1 py-0.5 rounded">WTR EXTW</span>
+                        </div>
+                        <div className="my-1">
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-xl font-black text-white font-mono">{liveSqft}</span>
+                            <span className="text-[10px] font-black text-brand-cyan uppercase">SF</span>
+                          </div>
+                          <span className="text-[8px] text-slate-400 block font-mono">
+                            {roomDimensions.length.toFixed(1)}' × {roomDimensions.width.toFixed(1)}'
+                          </span>
+                        </div>
+                        <span className="text-[7px] text-emerald-400 font-bold uppercase truncate">Floor & Extraction</span>
+                      </div>
+
+                      {/* Linear Wall Footage Card */}
+                      <div className="bg-slate-900/95 border border-emerald-500/30 rounded-2xl p-2.5 flex flex-col justify-between relative overflow-hidden">
+                        <div className="flex justify-between items-start">
+                          <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Linear Walls</span>
+                          <span className="text-[7px] font-mono text-emerald-400 bg-emerald-400/10 px-1 py-0.5 rounded">WTR DRYW</span>
+                        </div>
+                        <div className="my-1">
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-xl font-black text-white font-mono">{liveLinearFeet}</span>
+                            <span className="text-[10px] font-black text-emerald-400 uppercase">LF</span>
+                          </div>
+                          <span className="text-[8px] text-slate-400 block font-mono">
+                            2 × ({roomDimensions.length.toFixed(1)}' + {roomDimensions.width.toFixed(1)}')
+                          </span>
+                        </div>
+                        <span className="text-[7px] text-emerald-400 font-bold uppercase truncate">Flood Cut & Base</span>
+                      </div>
+                    </div>
+
+                    {/* Dimension Fine-Tuning Steppers */}
+                    <div className="bg-black/40 rounded-xl p-2 border border-white/5 space-y-1.5">
+                      <div className="flex justify-between items-center text-[8px] font-bold text-slate-400 uppercase">
+                        <span>Boundary Adjust</span>
+                        <span className="text-slate-500 font-mono">Height: {roomDimensions.height.toFixed(1)}' ({liveWallSurfaceSqft} SF walls)</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <div className="flex items-center justify-between bg-slate-900 rounded-lg px-2 py-0.5 text-xs">
+                          <span className="text-[8px] font-bold text-slate-500">L</span>
+                          <span className="font-mono text-white text-[10px] font-bold">{roomDimensions.length.toFixed(1)}'</span>
+                          <div className="flex flex-col ml-1">
+                            <button
+                              type="button"
+                              onClick={() => setRoomDimensions(d => ({ ...d, length: Math.max(1, Math.round((d.length + 0.5) * 10) / 10) }))}
+                              className="text-[8px] text-cyan-400 hover:text-white leading-none px-0.5"
+                            >+</button>
+                            <button
+                              type="button"
+                              onClick={() => setRoomDimensions(d => ({ ...d, length: Math.max(1, Math.round((d.length - 0.5) * 10) / 10) }))}
+                              className="text-[8px] text-slate-400 hover:text-white leading-none px-0.5"
+                            >-</button>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between bg-slate-900 rounded-lg px-2 py-0.5 text-xs">
+                          <span className="text-[8px] font-bold text-slate-500">W</span>
+                          <span className="font-mono text-white text-[10px] font-bold">{roomDimensions.width.toFixed(1)}'</span>
+                          <div className="flex flex-col ml-1">
+                            <button
+                              type="button"
+                              onClick={() => setRoomDimensions(d => ({ ...d, width: Math.max(1, Math.round((d.width + 0.5) * 10) / 10) }))}
+                              className="text-[8px] text-cyan-400 hover:text-white leading-none px-0.5"
+                            >+</button>
+                            <button
+                              type="button"
+                              onClick={() => setRoomDimensions(d => ({ ...d, width: Math.max(1, Math.round((d.width - 0.5) * 10) / 10) }))}
+                              className="text-[8px] text-slate-400 hover:text-white leading-none px-0.5"
+                            >-</button>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between bg-slate-900 rounded-lg px-2 py-0.5 text-xs">
+                          <span className="text-[8px] font-bold text-slate-500">H</span>
+                          <span className="font-mono text-white text-[10px] font-bold">{roomDimensions.height.toFixed(1)}'</span>
+                          <div className="flex flex-col ml-1">
+                            <button
+                              type="button"
+                              onClick={() => setRoomDimensions(d => ({ ...d, height: Math.max(1, Math.round((d.height + 0.5) * 10) / 10) }))}
+                              className="text-[8px] text-cyan-400 hover:text-white leading-none px-0.5"
+                            >+</button>
+                            <button
+                              type="button"
+                              onClick={() => setRoomDimensions(d => ({ ...d, height: Math.max(1, Math.round((d.height - 0.5) * 10) / 10) }))}
+                              className="text-[8px] text-slate-400 hover:text-white leading-none px-0.5"
+                            >-</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Primary Action Button: Push to Tic Sheet */}
+                    <div className="space-y-1.5">
+                      <button
+                        type="button"
+                        onClick={() => pushMeasurementsToTicSheet({
+                          roomName: currentZone,
+                          sqft: liveSqft,
+                          linearFeet: liveLinearFeet,
+                          height: roomDimensions.height
+                        })}
+                        className="w-full py-2.5 bg-gradient-to-r from-brand-cyan to-teal-400 hover:from-cyan-400 hover:to-teal-300 text-slate-950 font-black text-xs uppercase tracking-wider rounded-2xl shadow-[0_0_20px_rgba(6,182,212,0.4)] active:scale-[0.98] transition-all flex items-center justify-center space-x-2"
+                      >
+                        <Zap size={15} className="fill-slate-950" />
+                        <span>Push {liveSqft} SF & {liveLinearFeet} LF to Tic Sheet</span>
+                      </button>
+
+                      {/* Last Pushed Notification banner */}
+                      {lastPushedNotification && (
+                        <div className="p-2 bg-emerald-500/15 border border-emerald-500/30 rounded-xl flex items-center justify-between animate-in fade-in">
+                          <div className="flex items-center space-x-1.5 text-[9px] text-emerald-400 truncate">
+                            <CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" />
+                            <span className="font-bold truncate">
+                              Synced {lastPushedNotification.sqft} SF & {lastPushedNotification.linearFeet} LF for {lastPushedNotification.roomName}!
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowTicSheetPreview(true)}
+                            className="text-[8px] text-brand-cyan hover:underline font-bold uppercase ml-2 flex-shrink-0"
+                          >
+                            Preview
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
               
@@ -2130,6 +2545,22 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
                           />
                         </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sqft = selectedArea.sqFeet || (arData.scale ? calculateAreaSqFeet(selectedArea.points, arData.scale) : 0);
+                        const lf = selectedArea.linearFeet || (arData.scale ? calculatePerimeterLinearFeet(selectedArea.points, arData.scale) : 0);
+                        pushMeasurementsToTicSheet({
+                          roomName: selectedArea.label,
+                          sqft,
+                          linearFeet: lf
+                        });
+                      }}
+                      className="w-full py-2 bg-brand-cyan/20 border border-brand-cyan/40 hover:bg-brand-cyan hover:text-slate-950 text-brand-cyan rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center space-x-1.5 shadow-sm active:scale-95"
+                    >
+                      <Zap size={13} />
+                      <span>Push Area to Tic Sheet</span>
+                    </button>
                   </div>
 
                   <div className="space-y-3">
@@ -2445,24 +2876,49 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
                               </div>
                             </div>
 
-                            {scan.materials && (
+                            <div className="flex items-center justify-between text-[9px] font-mono text-slate-300 py-0.5">
+                              <span className="text-slate-500 uppercase">Linear Walls:</span>
+                              <span className="text-emerald-400 font-bold">
+                                {scan.dimensions ? (2 * ((scan.dimensions.length || 0) + (scan.dimensions.width || 0))).toFixed(1) : '0.0'} LF
+                              </span>
+                            </div>
+
+                             {scan.materials && (
                               <div className="space-y-1 text-[9px] text-slate-400">
                                 <span className="text-[8px] text-slate-600 uppercase font-black block tracking-wider">A.I. Extracted Materials</span>
                                 <div className="flex flex-wrap gap-1">
-                                  {(scan.materials as unknown as DemoScanMaterials).flooring && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{(scan.materials as unknown as DemoScanMaterials).flooring}</span>}
-                                  {(scan.materials as unknown as DemoScanMaterials).wall && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{(scan.materials as unknown as DemoScanMaterials).wall}</span>}
-                                  {(scan.materials as unknown as DemoScanMaterials).trim && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{(scan.materials as unknown as DemoScanMaterials).trim}</span>}
+                                  {scan.materials.flooring && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{scan.materials.flooring}</span>}
+                                  {scan.materials.wall && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{scan.materials.wall}</span>}
+                                  {scan.materials.trim && <span className="bg-white/5 text-slate-300 px-1.5 py-0.5 rounded border border-white/5">{scan.materials.trim}</span>}
                                 </div>
                               </div>
                             )}
 
-                            <button
-                              onClick={() => setSelectedWalkthrough(scan)}
-                              className="w-full py-2 bg-brand-cyan/20 text-brand-cyan hover:bg-brand-cyan hover:text-slate-900 font-bold text-[10px] uppercase tracking-wider rounded-xl transition-all flex items-center justify-center space-x-2"
-                            >
-                              <Play size={10} fill="currentColor" />
-                              <span>Execute Walkthrough</span>
-                            </button>
+                            <div className="grid grid-cols-2 gap-2 pt-1">
+                              <button
+                                onClick={() => setSelectedWalkthrough(scan)}
+                                className="py-2 bg-brand-cyan/20 text-brand-cyan hover:bg-brand-cyan hover:text-slate-900 font-bold text-[10px] uppercase tracking-wider rounded-xl transition-all flex items-center justify-center space-x-1.5"
+                              >
+                                <Play size={10} fill="currentColor" />
+                                <span>Walkthrough</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const sqft = scan.dimensions?.sqft || ((scan.dimensions?.length || 0) * (scan.dimensions?.width || 0));
+                                  const lf = 2 * ((scan.dimensions?.length || 0) + (scan.dimensions?.width || 0));
+                                  pushMeasurementsToTicSheet({
+                                    roomName: scan.roomName,
+                                    sqft,
+                                    linearFeet: lf,
+                                    height: scan.dimensions?.height
+                                  });
+                                }}
+                                className="py-2 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-slate-900 font-bold text-[10px] uppercase tracking-wider rounded-xl transition-all flex items-center justify-center space-x-1 border border-emerald-500/30"
+                              >
+                                <Zap size={10} />
+                                <span>Push to Tic Sheet</span>
+                              </button>
+                            </div>
                           </div>
                         ))
                       ) : (
@@ -2486,14 +2942,20 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
                                   flooring: 'Red Oak Hardwood',
                                   wall: 'Gypsum Wood Paneling',
                                   trim: 'Pine Moldings'
-                                } as unknown as RoomMaterials
+                                } as RoomMaterials
                               };
                               onUpdate({ roomScans: [...(project.roomScans || []), demoScan] });
-                              EventBus.publish('com.restorationai.project.updated', { projectId: project.id }, project.id, 'Demo scan model successfully created', 'success');
+                              pushMeasurementsToTicSheet({
+                                roomName: 'Basement Room A',
+                                sqft: 168,
+                                linearFeet: 52,
+                                height: 8
+                              });
+                              EventBus.publish('com.restorationai.project.updated', { projectId: project.id }, project.id, 'Demo scan model created & pushed to Tic Sheet', 'success');
                             }}
                             className="bg-brand-cyan text-slate-900 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-cyan-400 transition-colors mx-auto block"
                           >
-                            Generate Demo 3D Scan
+                            Generate Demo 3D Scan & Push
                           </button>
                         </div>
                       )}
@@ -2826,6 +3288,94 @@ const ARMapping: React.FC<ARMappingProps> = ({ project, onUpdate }) => {
                   })}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tic Sheet Line Items Preview Modal */}
+      {showTicSheetPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md pointer-events-auto">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95">
+            <div className="p-4 bg-slate-950 border-b border-white/10 flex justify-between items-center">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-xl bg-brand-cyan/20 border border-brand-cyan/40 flex items-center justify-center text-brand-cyan">
+                  <FileSpreadsheet size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">Tic Sheet Line Items</h3>
+                  <p className="text-[10px] text-slate-400">Directly synchronized from AR Spatial Mapping</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowTicSheetPreview(false)} 
+                className="text-slate-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1 space-y-3 bg-slate-900/60">
+              {(!project.lineItems || project.lineItems.length === 0) ? (
+                <div className="text-center py-12 space-y-3">
+                  <FileSpreadsheet size={36} className="mx-auto text-slate-600" />
+                  <p className="text-xs font-bold text-slate-400">No Line Items Yet</p>
+                  <p className="text-[10px] text-slate-500 max-w-xs mx-auto">
+                    Use the AR Spatial Scanner to calculate room square footage and linear wall footage and push them to the Tic Sheet.
+                  </p>
+                </div>
+              ) : (
+                project.lineItems.map((item) => {
+                  const isAR = item.tags?.includes('AR Scanned');
+                  return (
+                    <div 
+                      key={item.id} 
+                      className={`p-3 rounded-2xl border transition-all ${isAR ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-950/80 border-white/5'}`}
+                    >
+                      <div className="flex justify-between items-start mb-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {item.code && (
+                            <span className="text-[9px] font-black uppercase text-brand-cyan bg-brand-cyan/15 px-1.5 py-0.5 rounded">
+                              {item.code}
+                            </span>
+                          )}
+                          {isAR && (
+                            <span className="text-[8px] font-black uppercase text-emerald-400 bg-emerald-400/20 px-1.5 py-0.5 rounded border border-emerald-400/30">
+                              AR Measured
+                            </span>
+                          )}
+                          <h4 className="text-xs font-bold text-white">{item.description}</h4>
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-end text-xs">
+                        <div className="flex space-x-3 text-[10px] text-slate-400 font-mono">
+                          <span>Qty: <strong className="text-slate-200">{item.quantity}</strong></span>
+                          <span>Rate: <strong className="text-slate-200">${item.rate?.toFixed(2)}</strong></span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-sm font-black text-brand-cyan font-mono">${item.total?.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="p-4 bg-slate-950 border-t border-white/10 flex items-center justify-between">
+              <div>
+                <span className="text-[9px] uppercase font-bold text-slate-500 block">Total Mitigation Scope</span>
+                <span className="text-base font-black text-brand-cyan font-mono">
+                  ${(project.totalCost || project.lineItems?.reduce((sum, i) => sum + (i.total || 0), 0) || 0).toFixed(2)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTicSheetPreview(false)}
+                className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-colors"
+              >
+                Close Preview
+              </button>
             </div>
           </div>
         </div>

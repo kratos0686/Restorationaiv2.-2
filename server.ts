@@ -23,6 +23,7 @@ import * as admin from 'firebase-admin';
 import { Storage } from '@google-cloud/storage';
 import { Writable } from 'node:stream';
 import { Project, User, Company, InventoryEquipment } from './types';
+import { generateDefaultProjectTemplates, ensureProjectDocumentationTemplates } from './services/projectTemplateAutomation';
 
 // Define server-side in-memory mock database store for absolute stability and zero startup crashes
 const mockProjectsStore: Project[] = [
@@ -445,7 +446,7 @@ const gcsStorage = {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   const isProd = process.env.NODE_ENV === 'production';
   
   const DIST_DIR = path.resolve(process.cwd(), 'dist');
@@ -520,7 +521,7 @@ api.get('/projects', async (req: Request, res: Response) => {
       query = query.where('companyId', '==', req.query.companyId as string);
     }
     const snapshot = await query.get();
-    const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const projects = snapshot.docs.map(doc => ensureProjectDocumentationTemplates({ id: doc.id, ...(doc.data() as Project) }));
     res.json(projects);
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -531,7 +532,8 @@ api.get('/projects/:id', async (req: Request, res: Response) => {
   try {
     const doc = await db.collection('projects').doc(String(req.params.id)).get();
     if (!doc.exists) return res.status(404).json({ error: 'Project not found' });
-    res.json({ id: doc.id, ...doc.data() });
+    const project = ensureProjectDocumentationTemplates({ id: doc.id, ...(doc.data() as Project) });
+    res.json(project);
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -539,6 +541,16 @@ api.get('/projects/:id', async (req: Request, res: Response) => {
 
 api.post('/projects', async (req: Request, res: Response) => {
   try {
+    const docTemplates = req.body.documentationTemplates || generateDefaultProjectTemplates({
+      client: req.body.client,
+      address: req.body.address,
+      lossDate: req.body.lossDate,
+      insurance: req.body.insurance,
+      claimNumber: req.body.claimNumber,
+      waterCategory: req.body.waterCategory,
+      lossClass: req.body.lossClass,
+    });
+
     const newProject = { 
       id: `proj-${Date.now()}`, 
       ...req.body,
@@ -550,7 +562,8 @@ api.post('/projects', async (req: Request, res: Response) => {
       videos: req.body.videos || [],
       equipment: req.body.equipment || [],
       dailyNarratives: req.body.dailyNarratives || [],
-      dryingMonitor: req.body.dryingMonitor || []
+      dryingMonitor: req.body.dryingMonitor || [],
+      documentationTemplates: docTemplates
     };
     await db.collection('projects').doc(newProject.id).set(newProject);
     res.status(201).json(newProject);
@@ -714,7 +727,8 @@ api.post('/ai/process-scan', async (req: Request, res: Response) => {
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    const ai = new GoogleGenAI(apiKey ? { apiKey } : {});
     const imageParts = capturedImages.map(img => ({ inlineData: { mimeType: 'image/jpeg', data: img.base64 } }));
     
     // STEP 1: Base Analysis (Dimensions, Materials, Assessment)
@@ -881,7 +895,7 @@ app.use('/api', api);
 
   if (!isProd) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);

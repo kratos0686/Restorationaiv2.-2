@@ -423,6 +423,41 @@ ${equipment.map(eq => `    <Unit>
     </Unit>`).join('\n')}
   </Equipment>
 
+  <ReferenceReadings count="${(project.referenceReadings || []).length}">
+${(project.referenceReadings || []).map(ref => `    <Reading>
+      <Zone>${esc(ref.zone)}</Zone>
+      <TempF>${ref.temp}</TempF>
+      <RH>${ref.rh}</RH>
+      <GPP>${ref.gpp}</GPP>
+      <DewPoint>${ref.dewPoint}</DewPoint>
+      <Timestamp>${isoDate(ref.timestamp)}</Timestamp>
+      <Notes>${esc(ref.notes)}</Notes>
+    </Reading>`).join('\n')}
+  </ReferenceReadings>
+
+  <AttachedDocuments count="${(project.attachedDocuments || []).length}">
+${(project.attachedDocuments || []).map(doc => `    <Document>
+      <ID>${esc(doc.id)}</ID>
+      <Name>${esc(doc.name)}</Name>
+      <Type>${esc(doc.type)}</Type>
+      <FileSize>${esc(doc.fileSize)}</FileSize>
+      <UploadedAt>${isoDate(doc.uploadedAt)}</UploadedAt>
+      <Notes>${esc(doc.notes)}</Notes>
+    </Document>`).join('\n')}
+  </AttachedDocuments>
+
+  <SignedAuthorizations count="${(project.signedAuthorizations || []).length}">
+${(project.signedAuthorizations || []).map(sig => `    <Authorization>
+      <ID>${esc(sig.id)}</ID>
+      <FormType>${esc(sig.formType)}</FormType>
+      <Title>${esc(sig.title)}</Title>
+      <SignerName>${esc(sig.signerName)}</SignerName>
+      <SignerRole>${esc(sig.signerRole)}</SignerRole>
+      <SignedAt>${isoDate(sig.signedAt)}</SignedAt>
+      <VerificationHash>${esc(sig.verificationHash)}</VerificationHash>
+    </Authorization>`).join('\n')}
+  </SignedAuthorizations>
+
   <Scope totalLineItems="${allLineItems.length}" grandTotal="${fmt2(grandTotal)}">
 ${allLineItems.map(serializeLineItem).join('\n')}
   </Scope>
@@ -468,6 +503,9 @@ export async function downloadESX(project: Project): Promise<XactimateExportResu
 </Manifest>`;
   zip.file('manifest.xml', manifest);
 
+  // Include full project JSON dossier inside ESX package for complete portability
+  zip.file('project_dossier.json', JSON.stringify(project, null, 2));
+
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
 
   const safeJobNum = lossNumber.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -481,6 +519,27 @@ export async function downloadESX(project: Project): Promise<XactimateExportResu
   URL.revokeObjectURL(url);
 
   return result;
+}
+
+/**
+ * Downloads complete lossless JSON backup of the project file,
+ * preserving referenceReadings, moisturePins, attachedDocuments, and reportProfiles.
+ */
+export function exportProjectJSON(project: Project): void {
+  const jsonStr = JSON.stringify(project, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+  const lossNumber = project.claimNumber || project.id || 'project';
+  const safeJobNum = lossNumber.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filename = `${safeJobNum}_project_data.json`;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 /**

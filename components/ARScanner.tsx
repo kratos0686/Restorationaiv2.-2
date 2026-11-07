@@ -40,6 +40,7 @@ const ARScanner: React.FC<ARScannerProps> = ({ onComplete }) => {
   
   const [mode, setMode] = useState<Mode>('init');
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isConfirmingDiscard, setIsConfirmingDiscard] = useState<boolean>(false);
   
   // Odometry State
   const [orientation, setOrientation] = useState({ alpha: 0, beta: 90, gamma: 0 }); // Heading, Tilt, Roll
@@ -496,7 +497,7 @@ const ARScanner: React.FC<ARScannerProps> = ({ onComplete }) => {
           setMode('scan');
           EventBus.publish('com.restorationai.scan.started', {}, undefined, 'AR Scanner Initialized', 'info');
         } else {
-          alert("Sensors required for Odometry.");
+          EventBus.publish('com.restorationai.scan.error', { error: 'Sensors required for Odometry.' }, undefined, 'Motion & Orientation sensors are required for AR odometry.', 'warning');
         }
       } catch (_e) { console.error(_e); }
     } else {
@@ -1089,28 +1090,52 @@ const ARScanner: React.FC<ARScannerProps> = ({ onComplete }) => {
                       </div>
                       
                       <div className="flex flex-col space-y-2 pt-1 font-semibold">
-                          <button 
-                              onClick={requestSensors} 
-                              className="w-full bg-brand-cyan text-slate-950 py-3 rounded-xl font-black uppercase tracking-wider text-xs shadow-lg hover:bg-cyan-400 transition-all active:scale-95 text-center flex items-center justify-center"
-                          >
-                              Resume Previous Session
-                          </button>
-                          <button 
-                              onClick={() => {
-                                  if (confirm("Are you sure you want to discard your previous AR scan progress and start a fresh scan?")) {
-                                      clearCachedSession();
-                                      setScanPoints([]);
-                                      setCapturedImages([]);
-                                      setOriginOffset({ x: 0, z: 0 });
-                                      setCeilingHeight(8.0);
-                                      setAreas([]);
-                                      setAnomalies([]);
-                                  }
-                              }} 
-                              className="w-full bg-white/5 hover:bg-white/10 text-slate-400 font-bold text-xs py-2.5 rounded-xl transition-colors border border-white/5"
-                          >
-                              Discard & Start Fresh
-                          </button>
+                          {isConfirmingDiscard ? (
+                              <div className="bg-red-950/40 border border-red-500/30 rounded-xl p-3 space-y-3 animate-in fade-in duration-150">
+                                  <p className="text-xs text-red-200 font-bold text-center">
+                                      Discard cached corners and photos and start a fresh scan?
+                                  </p>
+                                  <div className="flex gap-2">
+                                      <button
+                                          onClick={() => setIsConfirmingDiscard(false)}
+                                          className="flex-1 min-h-[44px] bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs py-2.5 rounded-xl transition-colors border border-white/10 whitespace-nowrap"
+                                      >
+                                          Cancel
+                                      </button>
+                                      <button
+                                          onClick={() => {
+                                              clearCachedSession();
+                                              setScanPoints([]);
+                                              setCapturedImages([]);
+                                              setOriginOffset({ x: 0, z: 0 });
+                                              setCeilingHeight(8.0);
+                                              setAreas([]);
+                                              setAnomalies([]);
+                                              setIsConfirmingDiscard(false);
+                                              EventBus.publish('com.restorationai.scan.reset', {}, undefined, 'Previous AR scan session discarded', 'info');
+                                          }}
+                                          className="flex-1 min-h-[44px] bg-red-600 hover:bg-red-500 text-white font-black uppercase tracking-wider text-xs py-2.5 rounded-xl transition-colors shadow-lg whitespace-nowrap"
+                                      >
+                                          Confirm Discard
+                                      </button>
+                                  </div>
+                              </div>
+                          ) : (
+                              <>
+                                  <button 
+                                      onClick={requestSensors} 
+                                      className="w-full min-h-[44px] bg-brand-cyan text-slate-950 py-3 rounded-xl font-black uppercase tracking-wider text-xs shadow-lg hover:bg-cyan-400 transition-all active:scale-95 text-center flex items-center justify-center whitespace-nowrap"
+                                  >
+                                      Resume Previous Session
+                                  </button>
+                                  <button 
+                                      onClick={() => setIsConfirmingDiscard(true)} 
+                                      className="w-full min-h-[44px] bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs py-2.5 rounded-xl transition-colors border border-white/10 whitespace-nowrap"
+                                  >
+                                      Discard & Start Fresh
+                                  </button>
+                              </>
+                          )}
                       </div>
                   </div>
               ) : (
