@@ -2226,7 +2226,6 @@ const ProjectNotes: React.FC<{
 
   useEffect(() => {
     if (!isEditing && !isRecording) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLocalNotes(project.notes || "");
     }
   }, [project.notes, isEditing, isRecording]);

@@ -48,6 +48,7 @@ interface PhotoDocumentationProps {
   onUpdate?: (updates: Partial<Project>) => void;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const PHASE_CATEGORIES: {
   id: MediaPhaseCategory;
   label: string;
@@ -80,6 +81,7 @@ export const PHASE_CATEGORIES: {
   }
 ];
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const DAMAGE_TYPE_OPTIONS = [
   'Source of Loss / Plumbing',
   'Standing Water / Extraction',

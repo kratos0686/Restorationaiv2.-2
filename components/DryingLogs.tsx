@@ -19,15 +19,13 @@ import {
   MapPin,
   AlertTriangle,
   ShieldCheck,
-  Compass,
-  Info
+  Compass
 } from 'lucide-react';
 import { calculatePsychrometricsFromDryBulb } from '../utils/psychrometrics';
 import { 
   createReferenceReading, 
   fetchOutdoorWeather, 
-  evaluateGppDropAlert,
-  GppDropAlertResult
+  evaluateGppDropAlert
 } from '../utils/exteriorReference';
 import { useAppContext } from '../context/AppContext';
 import { 

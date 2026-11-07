@@ -15,23 +15,14 @@ import {
   ScanLine, 
   Pencil,
   Gauge,
-  Sparkles,
-  ShieldCheck,
-  CheckCircle2,
-  Box
+  CheckCircle2
 } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { Project, PlacedEquipment, InventoryEquipment } from '../types';
 import { EventBus } from '../services/EventBus';
 import { getInventory, updateInventoryItem } from '../services/api';
 import QRScanner from './QRScanner';
-import { 
-  calculateRoomEquipmentSizing, 
-  calculateDehumidifierCapacity, 
-  calculateAirMoverCount, 
-  normalizeLossClass, 
-  EquipmentSizingRecommendation 
-} from '../utils/equipmentSizing';
+import { calculateRoomEquipmentSizing } from '../utils/equipmentSizing';
 
 const EQUIPMENT_SPECS: Record<string, { amps: number, volts: number, cfm: number, type: string, dailyRate: number }> = {
   // LGR Dehumidifiers
