@@ -10,7 +10,6 @@ import {
   FileCheck, 
   Scale, 
   Sparkles,
-  Paperclip,
   AlertCircle
 } from 'lucide-react';
 import ReportGenerator from './ReportGenerator';

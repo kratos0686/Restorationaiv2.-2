@@ -2,8 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { 
   BUILTIN_REPORT_PROFILES, 
   getMissingRequiredFields, 
-  compileProfileReportMarkdown,
-  AVAILABLE_REPORT_SECTIONS
+  compileProfileReportMarkdown
 } from '../utils/reportProfiles';
 import { generateXactimateXML } from '../utils/xactimateExport';
 import {
@@ -24,8 +23,8 @@ describe('Feature 3 & 4: Carrier & Property-Manager Profiles and Attached Docume
     policyNumber: 'POL-112233',
     adjuster: 'Sarah Jenkins',
     adjusterPhone: '512-555-0199',
-    waterCategory: 'CAT_2' as any,
-    lossClass: 'Class 2' as any,
+    waterCategory: 'CAT_2' as unknown as Project['waterCategory'],
+    lossClass: 'Class 2' as unknown as Project['lossClass'],
     lossDate: '2026-10-10',
     jobCompletedDate: '2026-10-14',
     currentStage: 'Stabilize',

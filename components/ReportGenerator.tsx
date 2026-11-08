@@ -203,6 +203,7 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({
     if (selectedPhotos.length === 0 && photos.length > 0) {
       setSelectedPhotos(photos.slice(0, 4));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, selectedProfileId]);
 
   // Initialize signature canvas when modal opens

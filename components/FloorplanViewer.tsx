@@ -4,8 +4,7 @@ import { OrbitControls, useGLTF } from '@react-three/drei';
 import { 
   Project, 
   TrackedMaterial, 
-  MoistureMapPin, 
-  MoisturePinStatus 
+  MoistureMapPin
 } from '../types';
 import { computePinStatus, getPinStatusTheme } from '../utils/dryingAnalytics';
 import { EventBus } from '../services/EventBus';
@@ -13,16 +12,8 @@ import {
   MapPin, 
   Plus, 
   X, 
-  Check, 
-  Calendar, 
-  Droplets, 
-  Layers, 
-  Eye, 
   Trash2, 
-  History, 
-  ArrowRight,
-  TrendingDown,
-  Info
+  History
 } from 'lucide-react';
 
 function ArchitecturalModel({ url }: { url: string }) {
@@ -65,7 +56,7 @@ export default function FloorplanViewer({
 
   // Input for adding a new moisture reading to the selected material
   const [newReadingVal, setNewReadingVal] = useState('');
-  const [readingNotes, setReadingNotes] = useState('');
+  const [_readingNotes, setReadingNotes] = useState('');
 
   const floorplanRef = useRef<HTMLDivElement>(null);
 

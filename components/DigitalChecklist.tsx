@@ -35,7 +35,6 @@ import {
   Layers,
   Wrench,
   ClipboardCheck,
-  X,
   RefreshCw,
   Copy
 } from 'lucide-react';

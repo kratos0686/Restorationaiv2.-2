@@ -137,7 +137,6 @@ export function evaluateGppDropAlert(
   const outside = getLatest('outside');
   const unaffected = getLatest('unaffected');
   const affHvac = getLatest('affected-hvac');
-  const unaffHvac = getLatest('unaffected-hvac');
 
   // Check HVAC drop if both affected chamber and affected-hvac readings exist
   let hvacDrop: number | undefined;

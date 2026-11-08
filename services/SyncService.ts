@@ -481,7 +481,7 @@ export class BackgroundSyncService {
         } else if (task.operation === 'DELETE') {
           await deleteDoc(docRef);
         }
-      } catch (error) {
+      } catch {
         const retryCount = (task.retryCount || 0) + 1;
         const delayMs = Math.min(this.BASE_DELAY_MS * Math.pow(2, retryCount - 1), 60000 * 5);
         failedTasks.push({

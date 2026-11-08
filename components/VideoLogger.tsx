@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Camera,
   StopCircle,
-  Play,
   Video as VideoIcon,
   Trash2,
   Save,
@@ -53,7 +52,7 @@ export default function VideoLogger({
 }: VideoLoggerProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isStreamActive, setIsStreamActive] = useState(false);
-  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
+  const [_recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
