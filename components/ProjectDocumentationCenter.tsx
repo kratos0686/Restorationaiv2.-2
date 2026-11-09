@@ -12,14 +12,17 @@ import {
   Printer, 
   Copy, 
   Check, 
-  Edit3, 
   Plus, 
   Layers, 
   AlertCircle,
   FileCheck,
   CheckSquare,
   Wrench,
-  Wind
+  Wind,
+  Compass,
+  MapPin,
+  Navigation,
+  Loader2
 } from 'lucide-react';
 import { 
   Project, 
@@ -32,6 +35,7 @@ import {
 import { ensureProjectDocumentationTemplates } from '../services/projectTemplateAutomation';
 import { EventBus } from '../services/EventBus';
 import { AIRouterClient } from '../services/AIRouterClient';
+import { SignaturePad, SignaturePadSavePayload } from './SignaturePad';
 
 interface ProjectDocumentationCenterProps {
   project: Project;
@@ -62,10 +66,21 @@ export const ProjectDocumentationCenter: React.FC<ProjectDocumentationCenterProp
   const [isSaving, setIsSaving] = useState(false);
   const [isAiEnhancing, setIsAiEnhancing] = useState(false);
   const [aiMessage, setAiMessage] = useState<string | null>(null);
-  const [showSignModal, setShowSignModal] = useState(false);
-  const [signName, setSignName] = useState(templates.clientIntake.clientName || '');
   const [newItemText, setNewItemText] = useState('');
   const [newItemCategory, setNewItemCategory] = useState<ScopeOutlineItem['category']>('Drying Equipment');
+
+  // Latitude / Longitude to Street Address state for Client Intake Form
+  const [intakeLat, setIntakeLat] = useState('');
+  const [intakeLng, setIntakeLng] = useState('');
+  const [isIntakeLocating, setIsIntakeLocating] = useState(false);
+  const [intakeGeoInfo, setIntakeGeoInfo] = useState<{
+    lat: number;
+    lng: number;
+    granularity: string;
+    plusCode?: string;
+    formattedAddress: string;
+  } | null>(null);
+  const [intakeGeoError, setIntakeGeoError] = useState<string | null>(null);
 
   // Keep state synced if project changes externally
   useEffect(() => {
@@ -81,10 +96,10 @@ export const ProjectDocumentationCenter: React.FC<ProjectDocumentationCenterProp
   }, [project, onUpdateProject]);
 
   // Persist template changes
-  const saveTemplates = (newTemplates: ProjectDocumentationTemplates) => {
+  const saveTemplates = (newTemplates: ProjectDocumentationTemplates, extraProjectUpdates?: Partial<Project>) => {
     setTemplates(newTemplates);
     setIsSaving(true);
-    onUpdateProject?.({ documentationTemplates: newTemplates });
+    onUpdateProject?.({ documentationTemplates: newTemplates, ...(extraProjectUpdates || {}) });
     setTimeout(() => setIsSaving(false), 500);
 
     EventBus.publish(
@@ -99,7 +114,7 @@ export const ProjectDocumentationCenter: React.FC<ProjectDocumentationCenterProp
   // --------------------------------------------------------------------------
   // Client Intake Handlers
   // --------------------------------------------------------------------------
-  const updateIntakeField = (field: keyof ClientIntakeForm, value: unknown) => {
+  const updateIntakeField = (field: keyof ClientIntakeForm, value: unknown, extraProjectUpdates?: Partial<Project>) => {
     const updated: ProjectDocumentationTemplates = {
       ...templates,
       clientIntake: {
@@ -108,29 +123,144 @@ export const ProjectDocumentationCenter: React.FC<ProjectDocumentationCenterProp
         updatedAt: new Date().toISOString()
       }
     };
-    saveTemplates(updated);
+    saveTemplates(updated, extraProjectUpdates);
   };
 
-  const handleSignIntake = () => {
-    if (!signName.trim()) return;
-    const nowStr = new Date().toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+  const resolveIntakeCoordinatesToAddress = async (lat: number, lng: number) => {
+    setIntakeGeoError(null);
+    setIntakeLat(lat.toFixed(6));
+    setIntakeLng(lng.toFixed(6));
+    setIsIntakeLocating(true);
+    try {
+      const res = await fetch(
+        `/api/maps/reverse-geocode?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 429 || data?.quotaExceeded) {
+        window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
+        throw new Error('Google Maps Platform quota reached.');
+      }
+      const resolvedAddr = data?.formattedAddress || `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      updateIntakeField('propertyAddress', resolvedAddr, { address: resolvedAddr });
+      setIntakeGeoInfo({
+        lat,
+        lng,
+        granularity: data?.granularity || 'ROOFTOP',
+        plusCode: data?.plusCode || '',
+        formattedAddress: resolvedAddr,
+      });
+      EventBus.publish(
+        'com.restorationai.location.reverse_geocoded',
+        { latitude: lat, longitude: lng, address: resolvedAddr },
+        project.id,
+        `Client Intake Address Updated: ${resolvedAddr}`,
+        'success'
+      );
+    } catch (err) {
+      setIntakeGeoError(err instanceof Error ? err.message : 'Unable to resolve street address from coordinates.');
+    } finally {
+      setIsIntakeLocating(false);
+    }
+  };
+
+  const handleConvertIntakeLatLng = async () => {
+    setIntakeGeoError(null);
+    let parsedLat = parseFloat(intakeLat.trim());
+    let parsedLng = parseFloat(intakeLng.trim());
+
+    if ((isNaN(parsedLat) || isNaN(parsedLng)) && templates.clientIntake.propertyAddress) {
+      const match = templates.clientIntake.propertyAddress
+        .trim()
+        .match(/^(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)$/);
+      if (match) {
+        parsedLat = parseFloat(match[1]);
+        parsedLng = parseFloat(match[2]);
+      }
+    }
+
+    if (
+      isNaN(parsedLat) ||
+      isNaN(parsedLng) ||
+      parsedLat < -90 ||
+      parsedLat > 90 ||
+      parsedLng < -180 ||
+      parsedLng > 180
+    ) {
+      setIntakeGeoError('Enter valid Latitude (-90..90) and Longitude (-180..180) coordinates.');
+      return;
+    }
+
+    await resolveIntakeCoordinatesToAddress(parsedLat, parsedLng);
+  };
+
+  const handleIntakeDeviceGps = () => {
+    if (!navigator.geolocation) {
+      setIntakeGeoError('Geolocation is not supported by this browser.');
+      return;
+    }
+    setIsIntakeLocating(true);
+    setIntakeGeoError(null);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        await resolveIntakeCoordinatesToAddress(pos.coords.latitude, pos.coords.longitude);
+      },
+      () => {
+        setIsIntakeLocating(false);
+        setIntakeGeoError('Could not read device GPS. Enter Latitude & Longitude manually to convert to an address.');
+      }
+    );
+  };
+
+  const handleSaveIntakeSignature = (payload: SignaturePadSavePayload) => {
     const updated: ProjectDocumentationTemplates = {
       ...templates,
       clientIntake: {
         ...templates.clientIntake,
         status: 'signed',
         workAuthorizationSigned: true,
-        signedByName: signName.trim(),
-        signedDate: nowStr,
+        signedByName: payload.signerName,
+        signedDate: payload.signedAt,
+        signatureDataUrl: payload.signatureDataUrl,
         updatedAt: new Date().toISOString()
       }
     };
     saveTemplates(updated);
-    setShowSignModal(false);
+  };
+
+  const handleSaveScopeSignature = (payload: SignaturePadSavePayload) => {
+    const updated: ProjectDocumentationTemplates = {
+      ...templates,
+      scopeOutline: {
+        ...templates.scopeOutline,
+        status: 'approved',
+        technicianSignOff: {
+          techName: payload.signerName,
+          date: payload.signedAt,
+          signed: true,
+          signatureDataUrl: payload.signatureDataUrl
+        },
+        updatedAt: new Date().toISOString()
+      }
+    };
+    saveTemplates(updated);
+  };
+
+  const handleSaveAssessmentSignature = (payload: SignaturePadSavePayload) => {
+    const updated: ProjectDocumentationTemplates = {
+      ...templates,
+      damageAssessment: {
+        ...templates.damageAssessment,
+        status: 'completed',
+        technicianSignOff: {
+          techName: payload.signerName,
+          date: payload.signedAt,
+          signed: true,
+          signatureDataUrl: payload.signatureDataUrl
+        },
+        updatedAt: new Date().toISOString()
+      }
+    };
+    saveTemplates(updated);
   };
 
   // --------------------------------------------------------------------------
@@ -571,17 +701,118 @@ ${damageAssessment.recommendations.map(r => `1. ${r}`).join('\n')}
                   />
                 </div>
 
-                <div className="md:col-span-2">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
-                    Property Address
-                  </label>
+                <div className="md:col-span-2 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      Property Address
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleIntakeDeviceGps}
+                      disabled={isIntakeLocating}
+                      className="text-[11px] font-bold text-brand-cyan hover:text-cyan-300 flex items-center gap-1"
+                    >
+                      {isIntakeLocating ? <Loader2 size={12} className="animate-spin" /> : <Navigation size={12} />}
+                      <span>Use Device GPS</span>
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={templates.clientIntake.propertyAddress}
-                    onChange={(e) => updateIntakeField('propertyAddress', e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      updateIntakeField('propertyAddress', val, { address: val });
+                      const coordMatch = val.trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+                      if (coordMatch) {
+                        setIntakeLat(coordMatch[1]);
+                        setIntakeLng(coordMatch[2]);
+                      }
+                    }}
                     className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:border-brand-cyan outline-none"
-                    placeholder="Full street address, city, state, zip"
+                    placeholder="Full street address, city, state, zip (or paste Lat, Lng)"
                   />
+
+                  {/* Latitude & Longitude to Street Address Converter & Legend */}
+                  <div className="bg-slate-950/80 border border-white/10 rounded-2xl p-3.5 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-brand-cyan flex items-center gap-1.5">
+                        <Compass size={13} />
+                        <span>Latitude &amp; Longitude → Street Address Converter</span>
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-500">
+                        Reverse Geocoding &amp; Legend
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">
+                          Latitude (N/S)
+                        </label>
+                        <input
+                          type="text"
+                          value={intakeLat}
+                          onChange={(e) => setIntakeLat(e.target.value)}
+                          placeholder="e.g. 47.606209"
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:border-brand-cyan outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">
+                          Longitude (E/W)
+                        </label>
+                        <input
+                          type="text"
+                          value={intakeLng}
+                          onChange={(e) => setIntakeLng(e.target.value)}
+                          placeholder="e.g. -122.332069"
+                          className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:border-brand-cyan outline-none"
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <button
+                          type="button"
+                          onClick={handleConvertIntakeLatLng}
+                          disabled={isIntakeLocating}
+                          className="w-full py-1.5 px-3 rounded-lg bg-brand-cyan/20 hover:bg-brand-cyan/30 border border-brand-cyan/40 text-brand-cyan text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
+                        >
+                          {isIntakeLocating ? <Loader2 size={13} className="animate-spin" /> : <MapPin size={13} />}
+                          <span>Make Address</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {intakeGeoError && (
+                      <div className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1.5">
+                        {intakeGeoError}
+                      </div>
+                    )}
+
+                    <div className="pt-1.5 border-t border-white/5 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                      <div className="flex flex-wrap items-center gap-3 text-slate-400">
+                        <span className="font-bold uppercase tracking-wider text-slate-500">Legend:</span>
+                        <span className="flex items-center gap-1 text-emerald-400 font-bold">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                          ROOFTOP Verified
+                        </span>
+                        <span className="flex items-center gap-1 text-brand-cyan font-bold">
+                          <span className="w-2 h-2 rounded-full bg-brand-cyan" />
+                          Lat/Lng GPS Pin
+                        </span>
+                        <span className="flex items-center gap-1 text-amber-400 font-bold">
+                          <span className="w-2 h-2 rounded-full bg-amber-400" />
+                          Approximate Parcel
+                        </span>
+                      </div>
+                      {intakeGeoInfo && (
+                        <span className="font-mono text-slate-300 bg-white/5 px-2 py-0.5 rounded border border-white/10">
+                          {intakeGeoInfo.lat.toFixed(5)}°, {intakeGeoInfo.lng.toFixed(5)}° ·{' '}
+                          <strong className="text-emerald-400">{intakeGeoInfo.granularity}</strong>
+                          {intakeGeoInfo.plusCode ? ` · ${intakeGeoInfo.plusCode}` : ''}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 <div>
@@ -801,28 +1032,20 @@ ${damageAssessment.recommendations.map(r => `1. ${r}`).join('\n')}
                 </p>
               </div>
 
-              <div className="flex justify-end pt-2">
-                {!templates.clientIntake.workAuthorizationSigned ? (
-                  <button
-                    onClick={() => setShowSignModal(true)}
-                    className="px-6 py-2.5 rounded-xl bg-brand-cyan text-slate-950 font-bold text-xs uppercase tracking-wider hover:bg-cyan-400 transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)] active:scale-95 flex items-center space-x-2"
-                  >
-                    <Edit3 size={14} />
-                    <span>Authorize & Sign Intake Form</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      updateIntakeField('workAuthorizationSigned', false);
-                      updateIntakeField('signedByName', '');
-                      updateIntakeField('signedDate', '');
-                    }}
-                    className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 text-xs font-bold transition-colors"
-                  >
-                    Reset Signature
-                  </button>
-                )}
-              </div>
+              <SignaturePad
+                label="Client / Authorized Representative Work Authorization Signature"
+                defaultSignerName={templates.clientIntake.signedByName || templates.clientIntake.clientName}
+                defaultSignerRole="Property Owner / Authorized Agent"
+                existingSignatureDataUrl={templates.clientIntake.signatureDataUrl}
+                existingSignedAt={templates.clientIntake.signedDate}
+                onSave={handleSaveIntakeSignature}
+                onClear={() => {
+                  updateIntakeField('workAuthorizationSigned', false);
+                  updateIntakeField('signedByName', '');
+                  updateIntakeField('signedDate', '');
+                  updateIntakeField('signatureDataUrl', undefined);
+                }}
+              />
             </div>
           </div>
         )}
@@ -1006,6 +1229,18 @@ ${damageAssessment.recommendations.map(r => `1. ${r}`).join('\n')}
                   <span>Add Task</span>
                 </button>
               </div>
+
+              {/* Technician Scope Sign-Off Pad */}
+              <div className="pt-4 border-t border-white/5">
+                <SignaturePad
+                  compact
+                  label="Lead Technician Scope of Work Sign-Off"
+                  defaultSignerName={templates.scopeOutline.technicianSignOff?.techName || templates.damageAssessment.inspectorName || 'Lead Mitigation Technician'}
+                  existingSignatureDataUrl={templates.scopeOutline.technicianSignOff?.signatureDataUrl}
+                  existingSignedAt={templates.scopeOutline.technicianSignOff?.date}
+                  onSave={handleSaveScopeSignature}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -1179,6 +1414,18 @@ ${damageAssessment.recommendations.map(r => `1. ${r}`).join('\n')}
                   </div>
                 ))}
               </div>
+
+              {/* Inspector Damage Assessment Sign-Off Pad */}
+              <div className="pt-4 border-t border-white/5">
+                <SignaturePad
+                  compact
+                  label="Certified Inspector Damage Assessment Sign-Off"
+                  defaultSignerName={templates.damageAssessment.technicianSignOff?.techName || templates.damageAssessment.inspectorName || 'Lead Mitigation Inspector'}
+                  existingSignatureDataUrl={templates.damageAssessment.technicianSignOff?.signatureDataUrl}
+                  existingSignedAt={templates.damageAssessment.technicianSignOff?.date}
+                  onSave={handleSaveAssessmentSignature}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -1187,7 +1434,7 @@ ${damageAssessment.recommendations.map(r => `1. ${r}`).join('\n')}
       {/* Signature Modal */}
       {showSignModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-5">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-4">
             <div className="flex justify-between items-center border-b border-white/10 pb-3">
               <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
                 <FileCheck size={18} className="text-brand-cyan" />
@@ -1200,49 +1447,12 @@ ${damageAssessment.recommendations.map(r => `1. ${r}`).join('\n')}
                 ✕
               </button>
             </div>
-
-            <p className="text-xs text-slate-300 leading-relaxed">
-              By confirming below, the client or authorized representative authorizes emergency mitigation services 
-              under IICRC S500 guidelines.
-            </p>
-
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
-                Authorized Signer Printed Name
-              </label>
-              <input
-                type="text"
-                value={signName}
-                onChange={(e) => setSignName(e.target.value)}
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:border-brand-cyan outline-none"
-                placeholder="Enter client or representative name"
-              />
-            </div>
-
-            <div className="bg-slate-950 p-4 rounded-xl border border-white/5 text-center">
-              <div className="text-xs font-serif italic text-brand-cyan text-lg mb-1">
-                {signName || 'Client Signature'}
-              </div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-widest">
-                Digital Verification Stamp • {new Date().toLocaleDateString()}
-              </div>
-            </div>
-
-            <div className="flex space-x-3 pt-2">
-              <button
-                onClick={() => setShowSignModal(false)}
-                className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-slate-400 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSignIntake}
-                disabled={!signName.trim()}
-                className="flex-1 py-2.5 rounded-xl bg-brand-cyan text-slate-950 text-xs font-black uppercase tracking-wider hover:bg-cyan-400 transition-all disabled:opacity-50 shadow-md active:scale-95"
-              >
-                Confirm Signature
-              </button>
-            </div>
+            <SignaturePad
+              label="Authorize Emergency Mitigation Services"
+              defaultSignerName={signName || templates.clientIntake.clientName}
+              existingSignatureDataUrl={templates.clientIntake.signatureDataUrl}
+              onSave={handleSaveIntakeSignature}
+            />
           </div>
         </div>
       )}

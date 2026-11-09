@@ -27,7 +27,10 @@ export class IntelligenceRouter {
   constructor(ctx?: { customerId: string; jobId: string }) {
     this.ctx = { customerId: ctx?.customerId || "unknown", jobId: ctx?.jobId || "unknown", step: "unknown", model: "unknown" };
     const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-    this.ai = new GoogleGenAI(apiKey ? { apiKey } : {});
+    this.ai = new GoogleGenAI({
+      ...(apiKey ? { apiKey } : {}),
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
   }
 
   private pickBestModel(complexity: TaskComplexity): string {
@@ -570,6 +573,156 @@ STRUCTURE YOUR REPORT AS FOLLOWS:
 Ensure high professional rigor, clear tables, and insurance-ready terminology.`;
 
     return await this.execute('DEEP_REASONING', prompt);
+  }
+
+  /**
+   * Generates or refines an IICRC S500/S520 Carrier Report using Anthropic Claude (Claude 3.7 Sonnet)
+   * when ANTHROPIC_API_KEY is configured on the server, with automatic fallback to Gemini.
+   */
+  async generateClaudeReport(params: {
+    reportType?: string;
+    profileName?: string;
+    projectContext: unknown;
+    existingDraft?: string;
+    customInstructions?: string;
+  }): Promise<{ text: string; engine: string }> {
+    const systemPrompt = `You are a Master IICRC S500 (Water) and ANSI/IICRC S520 (Mold) Certified Restoration Estimator, Technical Report Writer, and Claims Documentation Specialist.
+Write an authoritative, audit-ready, field-practical mitigation report in clean Markdown.
+- Use precise industry terminology (psychrometric grain depression, GPP, equilibrium moisture content, LGR dehumidification, negative air pressure / HEPA AFD, laminar airflow, Category 1-3, Class 1-4).
+- Include clear Markdown tables for psychrometric logs, moisture pin matrices, deployed equipment, and Xactimate-style line items where applicable.
+- Never provide legal or policy coverage advice; refer policy questions to the carrier adjuster.`;
+
+    const userPrompt = `Generate a comprehensive ${params.profileName || params.reportType || 'Complete Mitigation'} Report for this restoration project.
+
+PROJECT DATA & FIELD TELEMETRY:
+${JSON.stringify(params.projectContext, null, 2)}
+
+${params.existingDraft ? `CURRENT REPORT DRAFT TO ENHANCE / POLISH:\n${params.existingDraft}\n` : ''}
+${params.customInstructions ? `ADDITIONAL TECHNICIAN INSTRUCTIONS:\n${params.customInstructions}\n` : ''}
+
+Output ONLY the final, client- and adjuster-ready Markdown report starting with a top-level # Heading.`;
+
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (anthropicKey && anthropicKey.trim().length > 0) {
+      try {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': anthropicKey.trim(),
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-3-7-sonnet-20250219',
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }],
+          }),
+        });
+
+        if (response.ok) {
+          const data = (await response.json()) as {
+            content?: Array<{ type: string; text?: string }>;
+          };
+          const claudeText = data.content?.find((c) => c.type === 'text')?.text;
+          if (claudeText) {
+            return { text: claudeText, engine: 'Claude 3.7 Sonnet' };
+          }
+        } else {
+          console.warn(`Anthropic API returned ${response.status}, falling back to Gemini.`);
+        }
+      } catch (err) {
+        console.warn('Anthropic Claude API call failed, falling back to Gemini:', err);
+      }
+    }
+
+    const geminiResp = await this.execute('DEEP_REASONING', `${systemPrompt}\n\n${userPrompt}`);
+    return {
+      text: geminiResp.text || '',
+      engine: 'Claude Report Pipeline (Gemini Fallback — set ANTHROPIC_API_KEY for direct Claude)',
+    };
+  }
+
+  /**
+   * Uses Gemini Multimodal Vision to process uploaded room photos, extract dimensions,
+   * identify structural materials & wet zones, and build a 2D SVG floor plan + moisture pins.
+   */
+  async buildFloorplanFromImages(params: {
+    images: Array<{ base64: string; mimeType?: string; label?: string }>;
+    projectContext?: { client?: string; address?: string; waterCategory?: string; lossClass?: string };
+  }): Promise<{ text: string }> {
+    const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+
+    params.images.forEach((img) => {
+      const cleanBase64 = img.base64.includes(',') ? img.base64.split(',')[1] : img.base64;
+      const mimeType = img.mimeType || (img.base64.includes('image/png') ? 'image/png' : 'image/jpeg');
+      parts.push({ inlineData: { mimeType, data: cleanBase64 } });
+    });
+
+    const prompt = `You are a Restoration Spatial Mapping & Gemini Vision Floor Plan Architect.
+Analyze the uploaded room/site photographs and reconstruct a multi-room or single-room 2D architectural floor plan with IICRC S500 moisture mapping.
+
+Context:
+Client: ${params.projectContext?.client || 'Mitigation Site'}
+Address: ${params.projectContext?.address || 'Loss Location'}
+Water Category: ${params.projectContext?.waterCategory || 'CAT_1'}
+Loss Class: ${params.projectContext?.lossClass || 'CLASS_2'}
+
+TASKS:
+1. Identify each distinct room/chamber visible across the photos, estimating dimensions (length, width, height in feet), flooring/wall/trim materials, and current status ('wet', 'drying', or 'dry').
+2. Identify 2 to 6 strategic moisture pin locations (normalized coordinates x: 0.12..0.88, y: 0.15..0.85 on the floor plan) targeting affected materials (Drywall, Baseboard, Subfloor, Hardwood, Carpet, Sill Plate) with realistic initial moisture content (%) and dry standard goal (%).
+3. Generate a clean, high-contrast top-down 2D architectural SVG blueprint (viewBox="0 0 800 600") in 'floorPlanSvg'.
+   - Use dark slate architectural styling (#0f172a background, #38bdf8 / #06b6d4 cyan structural walls, dashed door swings, window ticks, room labels, dimension callouts in feet, and translucent red/amber wet zone overlays where water damage is detected).
+   - Return valid raw SVG markup inside 'floorPlanSvg'.`;
+
+    parts.push({ text: prompt });
+
+    const response = await this.execute('FAST_ANALYSIS', { parts }, {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          summary: { type: Type.STRING, description: 'Brief architectural and moisture analysis summary from the images' },
+          floorPlanSvg: { type: Type.STRING, description: 'Complete raw <svg viewBox="0 0 800 600" ...>...</svg> string' },
+          rooms: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                length: { type: Type.NUMBER },
+                width: { type: Type.NUMBER },
+                height: { type: Type.NUMBER },
+                status: { type: Type.STRING, enum: ['wet', 'drying', 'dry'] },
+                flooring: { type: Type.STRING },
+                walls: { type: Type.STRING },
+                trim: { type: Type.STRING },
+                damageNotes: { type: Type.STRING }
+              },
+              required: ['name', 'length', 'width', 'height', 'status', 'flooring', 'walls', 'trim', 'damageNotes']
+            }
+          },
+          suggestedPins: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                materialName: { type: Type.STRING },
+                roomName: { type: Type.STRING },
+                x: { type: Type.NUMBER, description: 'Normalized X coordinate between 0.1 and 0.9' },
+                y: { type: Type.NUMBER, description: 'Normalized Y coordinate between 0.1 and 0.9' },
+                initialReading: { type: Type.NUMBER },
+                dryGoal: { type: Type.NUMBER }
+              },
+              required: ['materialName', 'roomName', 'x', 'y', 'initialReading', 'dryGoal']
+            }
+          }
+        },
+        required: ['summary', 'floorPlanSvg', 'rooms', 'suggestedPins']
+      }
+    });
+
+    return { text: response.text || '{}' };
   }
 
   getOperationsClient() {

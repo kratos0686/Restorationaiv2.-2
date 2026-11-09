@@ -67,4 +67,12 @@ export class AIRouterClient {
   generatePreliminaryDamageReport(...args: unknown[]) {
     return this.call('generatePreliminaryDamageReport', args);
   }
+
+  generateClaudeReport(...args: unknown[]): Promise<{ text: string; engine?: string }> {
+    return this.call('generateClaudeReport', args) as Promise<{ text: string; engine?: string }>;
+  }
+
+  buildFloorplanFromImages(...args: unknown[]) {
+    return this.call('buildFloorplanFromImages', args);
+  }
 }

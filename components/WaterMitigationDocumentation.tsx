@@ -13,6 +13,7 @@ import { AIRouterClient } from '../services/AIRouterClient';
 import { EventBus } from '../services/EventBus';
 import { updateProject } from '../services/api';
 import { useAppContext } from '../context/AppContext';
+import { SignaturePad, SignaturePadSavePayload } from './SignaturePad';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -80,6 +81,53 @@ export const WaterMitigationDocumentation: React.FC<WaterMitigationDocumentation
   const [isExportingPDF, setIsExportingPDF] = useState(false);
   const [isSavingToProject, setIsSavingToProject] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const [techSignatureBase64, setTechSignatureBase64] = useState<string | undefined>(
+    project?.adaptiveConfig?.completionSignOff?.technicianSignature
+  );
+  const [clientSignatureBase64, setClientSignatureBase64] = useState<string | undefined>(
+    project?.adaptiveConfig?.completionSignOff?.clientSignature
+  );
+
+  const handleSaveDocSignature = async (role: 'technician' | 'client', payload: SignaturePadSavePayload) => {
+    if (role === 'technician') {
+      setTechSignatureBase64(payload.signatureDataUrl);
+      setLeadTechName(payload.signerName);
+    } else {
+      setClientSignatureBase64(payload.signatureDataUrl);
+    }
+
+    if (!project) return;
+    const existingAuths = project.signedAuthorizations || [];
+    const newAuth = {
+      id: `sig-pdar-${Date.now()}`,
+      formType: 'work_authorization' as const,
+      title: `Preliminary Damage Assessment (${role === 'technician' ? 'Inspector' : 'Client'})`,
+      signerName: payload.signerName,
+      signerRole: (role === 'technician' ? 'Lead Technician' : 'Homeowner') as 'Lead Technician' | 'Homeowner',
+      signatureDataUrl: payload.signatureDataUrl,
+      signedAt: payload.timestamp,
+      verificationHash: `SHA256-${payload.timestamp.toString(16).toUpperCase()}`,
+      clausesAccepted: ['IICRC S500 Preliminary Assessment Attestation']
+    };
+
+    const updates: Partial<Project> = {
+      signedAuthorizations: [newAuth, ...existingAuths]
+    };
+
+    if (onUpdateProject) {
+      onUpdateProject(updates);
+    } else if (project.id) {
+      await updateProject(project.id, updates);
+    }
+
+    EventBus.publish(
+      'com.restorationai.signature.saved',
+      { projectId: project.id, signer: payload.signerName },
+      project.id,
+      `Base64 signature saved to project by ${payload.signerName}`,
+      'success'
+    );
+  };
 
   // File Inputs
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1312,18 +1360,24 @@ ${resultData.immediateActionProtocol.map((step, idx) => `${idx + 1}. ${step}`).j
                 <Markdown>{assessment.formattedReportMarkdown || ''}</Markdown>
               </div>
 
-              {/* Sign-off declaration */}
-              <div className="pt-8 border-t border-white/10 grid grid-cols-2 gap-8 text-xs text-slate-400">
-                <div>
-                  <div className="font-bold text-white mb-4">Certified Mitigation Inspector:</div>
-                  <div className="h-10 border-b border-slate-700 font-mono text-slate-300 flex items-end pb-1">{leadTechName}</div>
-                  <div className="text-[10px] text-slate-500 mt-1">Signature & S500 Certification</div>
-                </div>
-                <div>
-                  <div className="font-bold text-white mb-4">Property Owner / Representative:</div>
-                  <div className="h-10 border-b border-slate-700 font-mono text-slate-300 flex items-end pb-1">{project?.client || 'Authorized Client'}</div>
-                  <div className="text-[10px] text-slate-500 mt-1">Inspection Acknowledgment</div>
-                </div>
+              {/* Interactive Base64 Sign-off Pads */}
+              <div className="pt-8 border-t border-white/10 grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-slate-400">
+                <SignaturePad
+                  compact
+                  label="Certified Mitigation Inspector Sign-Off"
+                  defaultSignerName={leadTechName}
+                  defaultSignerRole="Lead Mitigation Specialist"
+                  existingSignatureDataUrl={techSignatureBase64}
+                  onSave={(payload) => handleSaveDocSignature('technician', payload)}
+                />
+                <SignaturePad
+                  compact
+                  label="Property Owner / Representative Sign-Off"
+                  defaultSignerName={project?.client || 'Authorized Client'}
+                  defaultSignerRole="Property Owner"
+                  existingSignatureDataUrl={clientSignatureBase64}
+                  onSave={(payload) => handleSaveDocSignature('client', payload)}
+                />
               </div>
             </div>
           </div>

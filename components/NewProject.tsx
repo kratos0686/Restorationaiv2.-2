@@ -9,6 +9,10 @@ import {
   Search,
   X,
   Send,
+  Compass,
+  Navigation,
+  FileCheck,
+  Sparkles as SparklesIcon,
 } from "lucide-react";
 import { useAppContext } from "../context/AppContext";
 import { addProject } from "../services/api";
@@ -16,29 +20,27 @@ import { WaterCategory, LossClass, Project } from "../types";
 import { Type } from "@google/genai";
 import { AIRouterClient } from "../services/AIRouterClient";
 import { EventBus } from "../services/EventBus";
-import { APIProvider } from "@vis.gl/react-google-maps";
+import { APIProvider, Map as GoogleMap, AdvancedMarker } from "@vis.gl/react-google-maps";
 import { generateDefaultProjectTemplates } from "../services/projectTemplateAutomation";
-import { FileCheck, Sparkles as SparklesIcon } from "lucide-react";
 
-interface GeocoderResult {
-  formatted_address: string;
+// Docs: https://developers.google.com/maps/documentation/geocoding/overview?utm_campaign=gmp_mcp_codeassist_v1_aistudio
+const GOOGLE_MAPS_API_KEY =
+  import.meta.env.VITE_GOOGLE_MAPS_API_KEY ||
+  process.env.GOOGLE_MAPS_PLATFORM_KEY ||
+  process.env.VITE_GOOGLE_MAPS_API_KEY ||
+  "";
+const hasValidKey = Boolean(GOOGLE_MAPS_API_KEY) && GOOGLE_MAPS_API_KEY !== "YOUR_API_KEY";
+
+interface ReverseGeocodeMetadata {
+  formattedAddress: string;
+  lat: number;
+  lng: number;
+  granularity: string;
+  plusCode?: string;
+  placeId?: string;
+  source: string;
+  allResults?: Array<{ formattedAddress: string; placeId: string; granularity: string }>;
 }
-
-interface GoogleMapsWindow {
-  google?: {
-    maps?: {
-      Geocoder: new () => {
-        geocode: (
-          request: { address?: string; location?: { lat: number; lng: number } },
-          callback: (results: GeocoderResult[] | null, status: string) => void
-        ) => void;
-      };
-    };
-  };
-}
-
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_PLATFORM_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
-const hasValidKey = Boolean(GOOGLE_MAPS_API_KEY) && GOOGLE_MAPS_API_KEY !== 'YOUR_API_KEY';
 
 const NewProject: React.FC = () => {
   const { setActiveTab, setSelectedProjectId, currentUser, isOnline } =
@@ -48,17 +50,21 @@ const NewProject: React.FC = () => {
   const [scribeText, setScribeText] = useState("");
   const [isListening, setIsListening] = useState(false);
 
-  // Address State
+  // Address & Coordinate State
   const [isLocating, setIsLocating] = useState(false);
+  const [latInput, setLatInput] = useState<string>("");
+  const [lngInput, setLngInput] = useState<string>("");
+  const [resolvedGeoMeta, setResolvedGeoMeta] = useState<ReverseGeocodeMetadata | null>(null);
+  const [geoErrorMsg, setGeoErrorMsg] = useState<string | null>(null);
 
-  // Address Lookup State (Kept for fallback if needed, but primary GPS button now uses Geolocation)
+  // Address Lookup Modal State
   const [showMapSearch, setShowMapSearch] = useState(false);
   const [mapQuery, setMapQuery] = useState("");
   const [isMapSearching, setIsMapSearching] = useState(false);
 
   // Dynamic Address Suggestions
   const [addressSuggestions, setAddressSuggestions] = useState<
-    Array<{ display_name: string; cleanAddress: string }>
+    Array<{ display_name: string; cleanAddress: string; lat?: number; lng?: number; granularity?: string }>
   >([]);
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
   const [showAddressDropdown, setShowAddressDropdown] = useState(false);
@@ -74,6 +80,126 @@ const NewProject: React.FC = () => {
     lossClass: LossClass.CLASS_1,
     jobType: "Water",
   });
+
+  /**
+   * Reverse-geocodes a pair of Latitude & Longitude coordinates into a physical street address
+   * via the server-side Google Maps Platform Geocoding API endpoint (/api/maps/reverse-geocode).
+   */
+  const reverseGeocodeCoordinates = async (lat: number, lng: number) => {
+    setGeoErrorMsg(null);
+    setLatInput(lat.toFixed(6));
+    setLngInput(lng.toFixed(6));
+
+    if (!isOnline) {
+      const coordFallback = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      setLossInfo((prev) => ({ ...prev, location: coordFallback }));
+      setResolvedGeoMeta({
+        formattedAddress: coordFallback,
+        lat,
+        lng,
+        granularity: "OFFLINE_GPS",
+        source: "Offline Coordinates",
+      });
+      return;
+    }
+
+    setIsLocating(true);
+    try {
+      const res = await fetch(
+        `/api/maps/reverse-geocode?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`
+      );
+      const data = await res.json().catch(() => ({}));
+
+      // Tier 2 Quota Check
+      if (
+        res.status === 429 ||
+        data?.quotaExceeded ||
+        data?.error === "RESOURCE_EXHAUSTED" ||
+        data?.error === "OVER_QUERY_LIMIT"
+      ) {
+        window.dispatchEvent(new CustomEvent("gmp-quota-exceeded"));
+        throw new Error("Google Maps Platform quota reached.");
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.error || `Reverse geocoding failed (${res.status})`);
+      }
+
+      const formattedAddress =
+        data?.formattedAddress || `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+
+      setLossInfo((prev) => ({ ...prev, location: formattedAddress }));
+      setResolvedGeoMeta({
+        formattedAddress,
+        lat,
+        lng,
+        granularity: data?.granularity || "ROOFTOP",
+        plusCode: data?.plusCode || "",
+        placeId: data?.placeId || "",
+        source: data?.source || "Google Maps Geocoding API",
+        allResults: Array.isArray(data?.allResults) ? data.allResults : [],
+      });
+
+      EventBus.publish(
+        "com.restorationai.location.reverse_geocoded",
+        {
+          latitude: lat,
+          longitude: lng,
+          address: formattedAddress,
+          source: data?.source || "Google Maps Geocoding API",
+        },
+        undefined,
+        `Converted (${lat.toFixed(4)}, ${lng.toFixed(4)}) → ${formattedAddress}`,
+        "success"
+      );
+    } catch (error) {
+      console.error("Reverse geocoding failed", error);
+      const fallbackStr = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      setLossInfo((prev) => ({ ...prev, location: fallbackStr }));
+      setGeoErrorMsg(
+        error instanceof Error ? error.message : "Could not resolve street address from coordinates."
+      );
+    } finally {
+      setIsLocating(false);
+    }
+  };
+
+  /**
+   * Converts manually entered Latitude and Longitude values (or "lat, lng" inside the location box)
+   * into a formatted physical street address.
+   */
+  const handleConvertLatLngToAddress = async () => {
+    setGeoErrorMsg(null);
+    let parsedLat = parseFloat(latInput.trim());
+    let parsedLng = parseFloat(lngInput.trim());
+
+    // Also allow parsing "lat, lng" directly from the Risk Address field if latInput/lngInput are empty
+    if ((isNaN(parsedLat) || isNaN(parsedLng)) && lossInfo.location.trim()) {
+      const match = lossInfo.location
+        .trim()
+        .match(/^(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)$/);
+      if (match) {
+        parsedLat = parseFloat(match[1]);
+        parsedLng = parseFloat(match[2]);
+      }
+    }
+
+    if (
+      isNaN(parsedLat) ||
+      isNaN(parsedLng) ||
+      parsedLat < -90 ||
+      parsedLat > 90 ||
+      parsedLng < -180 ||
+      parsedLng > 180
+    ) {
+      setGeoErrorMsg(
+        "Enter valid Latitude (-90 to 90) and Longitude (-180 to 180) coordinates to convert to a street address."
+      );
+      return;
+    }
+
+    await reverseGeocodeCoordinates(parsedLat, parsedLng);
+  };
 
   const handleScribe = async () => {
     if (!isOnline) return;
@@ -108,7 +234,13 @@ const NewProject: React.FC = () => {
 
         recognition.start();
       } else {
-        alert("Speech recognition not supported in this browser.");
+        EventBus.publish(
+          "com.restorationai.system.notice",
+          {},
+          undefined,
+          "Speech recognition not supported in this browser.",
+          "warning"
+        );
       }
       /* eslint-enable @typescript-eslint/no-explicit-any */
       return;
@@ -134,7 +266,7 @@ const NewProject: React.FC = () => {
               lossClass: { type: Type.STRING },
             },
           },
-        },
+        }
       );
       const data = JSON.parse(response.text || "{}");
       setLossInfo((prev) => ({
@@ -157,6 +289,14 @@ const NewProject: React.FC = () => {
 
   const handleLocationChange = (val: string) => {
     setLossInfo((prev) => ({ ...prev, location: val }));
+    setGeoErrorMsg(null);
+
+    // If user typed raw "lat, lng" into the location field, populate latInput and lngInput automatically
+    const coordMatch = val.trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+    if (coordMatch) {
+      setLatInput(coordMatch[1]);
+      setLngInput(coordMatch[2]);
+    }
 
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
@@ -172,223 +312,118 @@ const NewProject: React.FC = () => {
     searchTimeoutRef.current = setTimeout(async () => {
       setIsSearchingAddress(true);
       try {
-        const gWindow = window as unknown as GoogleMapsWindow;
-        if (hasValidKey && typeof window !== "undefined" && gWindow.google?.maps) {
-          const geocoder = new gWindow.google.maps.Geocoder();
-          geocoder.geocode({ address: val }, (results, status) => {
-            if (status === "OK" && results && results.length > 0) {
-              const mapped = results.map((item: GeocoderResult) => ({
-                display_name: item.formatted_address,
-                cleanAddress: item.formatted_address,
-              }));
-              setAddressSuggestions(mapped);
-              EventBus.publish(
-                "com.restorationai.location.geocoded",
-                {
-                  query: val,
-                  topResult: results[0].formatted_address,
-                  resultsCount: results.length,
-                },
-                undefined,
-                `Geocoded "${val}" via Google Maps`,
-                "info"
-              );
-            } else {
-              setAddressSuggestions([]);
-            }
-            setIsSearchingAddress(false);
-          });
+        // If user entered raw coordinates, reverse-geocode them immediately for the dropdown
+        if (coordMatch) {
+          const lat = parseFloat(coordMatch[1]);
+          const lng = parseFloat(coordMatch[2]);
+          const revRes = await fetch(
+            `/api/maps/reverse-geocode?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`
+          );
+          const revData = await revRes.json().catch(() => ({}));
+          if (revRes.status === 429 || revData?.quotaExceeded) {
+            window.dispatchEvent(new CustomEvent("gmp-quota-exceeded"));
+          } else if (revRes.ok && revData?.formattedAddress) {
+            setAddressSuggestions([
+              {
+                display_name: `Coordinates (${lat.toFixed(5)}, ${lng.toFixed(5)}) • ${revData.source || "Google Maps"}`,
+                cleanAddress: revData.formattedAddress,
+                lat,
+                lng,
+                granularity: revData.granularity || "ROOFTOP",
+              },
+            ]);
+          }
+          setIsSearchingAddress(false);
           return;
         }
 
-        const response = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val)}&format=json&limit=5&addressdetails=1`,
-          {
-            headers: {
-              Accept: "application/json",
-              "User-Agent": "RestorationAI/1.0 (merrillalex500@gmail.com)",
-            },
-          },
+        const res = await fetch(
+          `/api/maps/geocode?address=${encodeURIComponent(val.trim())}`
         );
-        if (response.ok) {
-          const results = await response.json();
-          if (Array.isArray(results)) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const mapped = results.map((item: any) => {
-              const addr = item.address;
-              let clean = "";
-              if (addr) {
-                const house = addr.house_number || "";
-                const road = addr.road || "";
-                const city =
-                  addr.city || addr.town || addr.village || addr.suburb || "";
-                const state = addr.state || "";
-                const postcode = addr.postcode || "";
-                const streetPart = [house, road].filter(Boolean).join(" ");
-                const cityStatePart = [city, state].filter(Boolean).join(", ");
-                clean = [streetPart, cityStatePart, postcode]
-                  .filter(Boolean)
-                  .join(" ");
-              }
-              if (!clean) {
-                clean = item.display_name;
-              }
-              return {
-                display_name: item.display_name,
-                cleanAddress: clean,
-              };
-            });
-            setAddressSuggestions(mapped);
-          }
+        const data = await res.json().catch(() => ({}));
+
+        if (
+          res.status === 429 ||
+          data?.quotaExceeded ||
+          data?.error === "RESOURCE_EXHAUSTED" ||
+          data?.error === "OVER_QUERY_LIMIT"
+        ) {
+          window.dispatchEvent(new CustomEvent("gmp-quota-exceeded"));
+          setAddressSuggestions([]);
+          return;
+        }
+
+        if (res.ok && Array.isArray(data?.results)) {
+          const mapped = data.results.map(
+            (item: {
+              formattedAddress: string;
+              displayName?: string;
+              lat?: number;
+              lng?: number;
+              granularity?: string;
+            }) => ({
+              display_name: item.displayName || item.formattedAddress,
+              cleanAddress: item.formattedAddress,
+              lat: item.lat,
+              lng: item.lng,
+              granularity: item.granularity,
+            })
+          );
+          setAddressSuggestions(mapped);
+        } else {
+          setAddressSuggestions([]);
         }
       } catch (err) {
         console.error("Address autocomplete search failed", err);
       } finally {
-        const gWindowCheck = window as unknown as GoogleMapsWindow;
-        if (!hasValidKey || typeof window === "undefined" || !gWindowCheck.google?.maps) {
-          setIsSearchingAddress(false);
-        }
+        setIsSearchingAddress(false);
       }
-    }, 600);
+    }, 500);
   };
 
-  const selectAddressSuggestion = (cleanAddress: string) => {
-    setLossInfo((prev) => ({ ...prev, location: cleanAddress }));
+  const selectAddressSuggestion = (sug: {
+    cleanAddress: string;
+    display_name: string;
+    lat?: number;
+    lng?: number;
+    granularity?: string;
+  }) => {
+    setLossInfo((prev) => ({ ...prev, location: sug.cleanAddress }));
+    if (sug.lat !== undefined && sug.lng !== undefined) {
+      setLatInput(sug.lat.toFixed(6));
+      setLngInput(sug.lng.toFixed(6));
+      setResolvedGeoMeta({
+        formattedAddress: sug.cleanAddress,
+        lat: sug.lat,
+        lng: sug.lng,
+        granularity: sug.granularity || "ROOFTOP",
+        source: "Google Maps Geocoding API",
+      });
+    }
     setAddressSuggestions([]);
     setShowAddressDropdown(false);
   };
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) {
-      alert("Geolocation is not supported by your browser.");
+      setGeoErrorMsg("Geolocation is not supported by your browser.");
       return;
     }
 
     setIsLocating(true);
+    setGeoErrorMsg(null);
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
-
-        if (!isOnline) {
-          // Offline fallback: just set coordinates
-          setLossInfo((prev) => ({
-            ...prev,
-            location: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
-          }));
-          setIsLocating(false);
-          return;
-        }
-
-        const gWindow = window as unknown as GoogleMapsWindow;
-        if (hasValidKey && typeof window !== "undefined" && gWindow.google?.maps?.Geocoder) {
-          const geocoder = new gWindow.google.maps.Geocoder();
-          geocoder.geocode({ location: { lat: latitude, lng: longitude } }, (results, status) => {
-            if (status === "OK" && results && results[0]) {
-              const cleanAddress = results[0].formatted_address;
-              setLossInfo((prev) => ({ ...prev, location: cleanAddress }));
-              EventBus.publish(
-                "com.restorationai.location.reverse_geocoded",
-                {
-                  latitude,
-                  longitude,
-                  address: cleanAddress,
-                  resultsCount: results.length,
-                },
-                undefined,
-                `Reverse-geocoded coordinates via Google Maps`,
-                "success"
-              );
-            } else {
-              setLossInfo((prev) => ({
-                ...prev,
-                location: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
-              }));
-            }
-            setIsLocating(false);
-          });
-          return;
-        }
-
-        try {
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`,
-            {
-              headers: {
-                Accept: "application/json",
-                "User-Agent": "RestorationAI/1.0 (merrillalex500@gmail.com)",
-              },
-            },
-          );
-          if (!response.ok)
-            throw new Error("Failed to fetch from OSM Nominatim");
-
-          const data = await response.json();
-
-          if (data && data.display_name) {
-            const addr = data.address;
-            let cleanAddress = "";
-            if (addr) {
-              const streetNo = addr.house_number || "";
-              const road = addr.road || "";
-              const city =
-                addr.city || addr.town || addr.village || addr.suburb || "";
-              const state = addr.state || "";
-              const postcode = addr.postcode || "";
-
-              const streetPart = [streetNo, road].filter(Boolean).join(" ");
-              const cityStatePart = [city, state].filter(Boolean).join(", ");
-
-              cleanAddress = [streetPart, cityStatePart, postcode]
-                .filter(Boolean)
-                .join(" ");
-            }
-
-            if (!cleanAddress) {
-              cleanAddress = data.display_name;
-            }
-
-            setLossInfo((prev) => ({ ...prev, location: cleanAddress }));
-          } else {
-            setLossInfo((prev) => ({
-              ...prev,
-              location: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
-            }));
-          }
-        } catch (error) {
-          console.error("Reverse geocoding failed", error);
-          try {
-            const fallbackResponse = await fetch(
-              `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`,
-            );
-            if (fallbackResponse.ok) {
-              const fallbackData = await fallbackResponse.json();
-              if (fallbackData && fallbackData.locality) {
-                setLossInfo((prev) => ({
-                  ...prev,
-                  location: `${fallbackData.locality}, ${fallbackData.principalSubdivision || ""}`,
-                }));
-                return;
-              }
-            }
-          } catch (fallbackErr) {
-            console.error(
-              "Fallback reverse geocoding also failed",
-              fallbackErr,
-            );
-          }
-          setLossInfo((prev) => ({
-            ...prev,
-            location: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
-          }));
-        } finally {
-          setIsLocating(false);
-        }
+        await reverseGeocodeCoordinates(latitude, longitude);
       },
       (error) => {
         console.error("Geolocation error", error);
         setIsLocating(false);
-        alert("Unable to retrieve location. Check permissions.");
-      },
+        setGeoErrorMsg(
+          "Unable to retrieve device GPS automatically. Enter your Latitude & Longitude coordinates below to convert to a street address."
+        );
+      }
     );
   };
 
@@ -396,90 +431,53 @@ const NewProject: React.FC = () => {
     if (!mapQuery.trim() || !isOnline) return;
     setIsMapSearching(true);
     try {
-      const gWindow = window as unknown as GoogleMapsWindow;
-      if (hasValidKey && typeof window !== "undefined" && gWindow.google?.maps) {
-        const geocoder = new gWindow.google.maps.Geocoder();
-        geocoder.geocode({ address: mapQuery }, (results, status) => {
-          if (status === "OK" && results && results.length > 0) {
-            const cleanAddress = results[0].formatted_address;
-            setLossInfo((prev) => ({ ...prev, location: cleanAddress }));
-            setShowMapSearch(false);
-            setMapQuery("");
-            EventBus.publish(
-              "com.restorationai.location.geocoded",
-              {
-                query: mapQuery,
-                topResult: cleanAddress,
-                resultsCount: results.length,
-              },
-              undefined,
-              `Geocoded "${mapQuery}" via Google Maps`,
-              "success"
-            );
-          } else {
-            alert("Address not found.");
-          }
-          setIsMapSearching(false);
-        });
+      const res = await fetch(
+        `/api/maps/geocode?address=${encodeURIComponent(mapQuery.trim())}`
+      );
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 429 || data?.quotaExceeded) {
+        window.dispatchEvent(new CustomEvent("gmp-quota-exceeded"));
         return;
       }
 
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(mapQuery)}&format=json&limit=5&addressdetails=1`,
-        {
-          headers: {
-            Accept: "application/json",
-            "User-Agent": "RestorationAI/1.0 (merrillalex500@gmail.com)",
-          },
-        },
-      );
-      if (!response.ok) throw new Error("Failed to fetch from Nominatim");
-
-      const data = await response.json();
-
-      if (data && data.length > 0) {
-        const resNode = data[0];
-        const addr = resNode.address;
-        let cleanAddress = "";
-        if (addr) {
-          const house = addr.house_number || "";
-          const road = addr.road || "";
-          const city =
-            addr.city || addr.town || addr.village || addr.suburb || "";
-          const state = addr.state || "";
-          const postcode = addr.postcode || "";
-
-          const streetPart = [house, road].filter(Boolean).join(" ");
-          const cityStatePart = [city, state].filter(Boolean).join(", ");
-          cleanAddress = [streetPart, cityStatePart, postcode]
-            .filter(Boolean)
-            .join(" ");
+      if (res.ok && Array.isArray(data?.results) && data.results.length > 0) {
+        const top = data.results[0];
+        setLossInfo((prev) => ({ ...prev, location: top.formattedAddress }));
+        if (top.lat !== undefined && top.lng !== undefined) {
+          setLatInput(Number(top.lat).toFixed(6));
+          setLngInput(Number(top.lng).toFixed(6));
+          setResolvedGeoMeta({
+            formattedAddress: top.formattedAddress,
+            lat: Number(top.lat),
+            lng: Number(top.lng),
+            granularity: top.granularity || "ROOFTOP",
+            source: data.source || "Google Maps Geocoding API",
+          });
         }
-
-        if (!cleanAddress) {
-          cleanAddress = resNode.display_name;
-        }
-
-        setLossInfo((prev) => ({ ...prev, location: cleanAddress }));
         setShowMapSearch(false);
         setMapQuery("");
+        EventBus.publish(
+          "com.restorationai.location.geocoded",
+          { query: mapQuery, topResult: top.formattedAddress },
+          undefined,
+          `Located "${top.formattedAddress}"`,
+          "success"
+        );
       } else {
-        alert("Address not found.");
+        setGeoErrorMsg("Address not found. Try refining your search or entering coordinates.");
       }
     } catch (error) {
       console.error("Map lookup failed", error);
-      alert("Map lookup failed. Please try again.");
+      setGeoErrorMsg("Map lookup failed. Please try again.");
     } finally {
-      const gWindowCheck = window as unknown as GoogleMapsWindow;
-      if (!hasValidKey || typeof window === "undefined" || !gWindowCheck.google?.maps) {
-        setIsMapSearching(false);
-      }
+      setIsMapSearching(false);
     }
   };
 
   const handleSubmit = async () => {
     if (!currentUser?.companyId || !lossInfo.clientName || !lossInfo.location) {
-      alert("Please fill in required fields (Location, Client Name).");
+      setGeoErrorMsg("Please fill in required fields (Risk Address and Client Name).");
       return;
     }
 
@@ -646,10 +644,25 @@ const NewProject: React.FC = () => {
           </div>
           <div className="grid gap-4">
             <div className="bg-white/5 border border-white/5 rounded-2xl p-6 space-y-6 shadow-inner">
-              <div className="space-y-2">
-                <label className="block text-[10px] font-black text-red-400 uppercase tracking-widest">
-                  Risk Address*
-                </label>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[10px] font-black text-red-400 uppercase tracking-widest">
+                    Risk Address*
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleUseMyLocation}
+                    disabled={isLocating}
+                    className="text-[11px] font-bold text-brand-cyan hover:text-cyan-300 flex items-center gap-1 transition-colors"
+                  >
+                    {isLocating ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Navigation size={12} />
+                    )}
+                    <span>Use Device GPS</span>
+                  </button>
+                </div>
                 <div className="relative group">
                   <input
                     value={lossInfo.location}
@@ -659,9 +672,10 @@ const NewProject: React.FC = () => {
                         setShowAddressDropdown(true);
                     }}
                     className="w-full bg-slate-900/50 text-lg font-bold text-white border border-white/10 rounded-xl px-4 py-3 pr-12 focus:outline-none focus:border-brand-cyan focus:ring-1 focus:ring-brand-cyan transition-all"
-                    placeholder="123 Example St"
+                    placeholder="123 Example St or 47.6062, -122.3321"
                   />
                   <button
+                    type="button"
                     onClick={handleUseMyLocation}
                     disabled={isLocating}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-brand-cyan hover:bg-white/5 rounded-lg transition-colors active:scale-90"
@@ -694,9 +708,7 @@ const NewProject: React.FC = () => {
                             <button
                               key={idx}
                               type="button"
-                              onClick={() =>
-                                selectAddressSuggestion(sug.cleanAddress)
-                              }
+                              onClick={() => selectAddressSuggestion(sug)}
                               className="w-full text-left px-4 py-3 hover:bg-white/5 border-b border-white/10 last:border-0 transition-colors"
                             >
                               <span className="block text-xs font-bold text-white leading-tight">
@@ -716,6 +728,132 @@ const NewProject: React.FC = () => {
                         </div>
                       </div>
                     )}
+                </div>
+
+                {/* Latitude & Longitude Coordinate-to-Address Converter & Map Legend */}
+                <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Compass size={15} className="text-brand-cyan" />
+                      <span className="text-[11px] font-black uppercase tracking-wider text-white">
+                        Latitude &amp; Longitude → Street Address Converter
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      Google Maps Reverse Geocoding
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Latitude (N/S)
+                      </label>
+                      <input
+                        type="text"
+                        value={latInput}
+                        onChange={(e) => setLatInput(e.target.value)}
+                        placeholder="e.g. 47.606209"
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-white focus:border-brand-cyan outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Longitude (E/W)
+                      </label>
+                      <input
+                        type="text"
+                        value={lngInput}
+                        onChange={(e) => setLngInput(e.target.value)}
+                        placeholder="e.g. -122.332069"
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-white focus:border-brand-cyan outline-none"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={handleConvertLatLngToAddress}
+                        disabled={isLocating}
+                        className="w-full py-2 px-3 rounded-xl bg-brand-cyan/20 hover:bg-brand-cyan/30 border border-brand-cyan/40 text-brand-cyan text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
+                      >
+                        {isLocating ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <MapPin size={14} />
+                        )}
+                        <span>Make Address</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {geoErrorMsg && (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-medium">
+                      {geoErrorMsg}
+                    </div>
+                  )}
+
+                  {/* Location Legend & Resolved Coordinate Telemetry */}
+                  <div className="pt-2 border-t border-white/5 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                    <div className="flex flex-wrap items-center gap-3 text-slate-400">
+                      <span className="font-bold uppercase tracking-wider text-slate-500">
+                        Location Legend:
+                      </span>
+                      <span className="flex items-center gap-1 text-emerald-400 font-bold">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        ROOFTOP Street Match
+                      </span>
+                      <span className="flex items-center gap-1 text-brand-cyan font-bold">
+                        <span className="w-2 h-2 rounded-full bg-brand-cyan" />
+                        GPS Lat/Lng Pin
+                      </span>
+                      <span className="flex items-center gap-1 text-amber-400 font-bold">
+                        <span className="w-2 h-2 rounded-full bg-amber-400" />
+                        Approximate Parcel
+                      </span>
+                    </div>
+                    {resolvedGeoMeta && (
+                      <span className="font-mono text-slate-300 bg-white/5 px-2 py-0.5 rounded border border-white/10">
+                        {resolvedGeoMeta.lat.toFixed(5)}°, {resolvedGeoMeta.lng.toFixed(5)}° ·{" "}
+                        <strong className="text-emerald-400">{resolvedGeoMeta.granularity}</strong>
+                        {resolvedGeoMeta.plusCode ? ` · ${resolvedGeoMeta.plusCode}` : ""}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Interactive Map Preview when valid key & coordinates are set */}
+                  {hasValidKey && resolvedGeoMeta && (
+                    <div className="mt-2 rounded-xl overflow-hidden border border-white/10 h-44 w-full relative">
+                      <GoogleMap
+                        style={{ width: "100%", height: "100%" }}
+                        center={{ lat: resolvedGeoMeta.lat, lng: resolvedGeoMeta.lng }}
+                        zoom={16}
+                        mapId="DEMO_MAP_ID"
+                        internalUsageAttributionIds={["gmp_mcp_codeassist_v1_aistudio"]}
+                        gestureHandling="greedy"
+                        disableDefaultUI={true}
+                        onClick={(ev) => {
+                          const clickedLat = ev.detail.latLng?.lat;
+                          const clickedLng = ev.detail.latLng?.lng;
+                          if (typeof clickedLat === "number" && typeof clickedLng === "number") {
+                            reverseGeocodeCoordinates(clickedLat, clickedLng);
+                          }
+                        }}
+                      >
+                        <AdvancedMarker
+                          position={{ lat: resolvedGeoMeta.lat, lng: resolvedGeoMeta.lng }}
+                          title={resolvedGeoMeta.formattedAddress}
+                        />
+                      </GoogleMap>
+                      <div className="absolute bottom-2 left-2 right-2 bg-slate-950/85 backdrop-blur-md border border-white/10 rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[10px] pointer-events-none">
+                        <span className="text-white font-bold truncate">
+                          {resolvedGeoMeta.formattedAddress}
+                        </span>
+                        <span className="text-brand-cyan font-mono shrink-0 ml-2">
+                          Tap map to relocate pin
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">

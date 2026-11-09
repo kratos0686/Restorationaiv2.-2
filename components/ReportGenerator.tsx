@@ -34,11 +34,15 @@ import {
   PenTool,
   Lock,
   MapPin,
-  RotateCcw
+  RotateCcw,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { AIRouterClient } from '../services/AIRouterClient';
+import { EventBus } from '../services/EventBus';
 
 import { LogoIcon } from './Branding';
 import {
@@ -148,6 +152,8 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({
 
   const [isEditing, setIsEditing] = useState(false);
   const [reportContent, setReportContent] = useState('');
+  const [isGeneratingClaude, setIsGeneratingClaude] = useState(false);
+  const [reportAiEngine, setReportAiEngine] = useState<string | null>(null);
   const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([]);
   const [isPhotoSelectorOpen, setIsPhotoSelectorOpen] = useState(false);
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
@@ -240,6 +246,56 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleGenerateClaudeReport = async () => {
+    setIsGeneratingClaude(true);
+    try {
+      const router = new AIRouterClient();
+      const res = await router.generateClaudeReport({
+        reportType,
+        profileName: activeProfile.name,
+        projectContext: {
+          id: project.id,
+          client: project.client,
+          address: project.address,
+          insurance: project.insurance,
+          claimNumber: project.claimNumber,
+          waterCategory: project.waterCategory,
+          lossClass: project.lossClass,
+          currentStage: project.currentStage,
+          summary: project.summary,
+          rooms: project.rooms,
+          equipment: project.equipment,
+          dryingMonitor: project.dryingMonitor,
+          lineItems: project.lineItems,
+          digitalChecklists: project.digitalChecklists,
+        },
+        existingDraft: reportContent,
+      });
+      if (res.text) {
+        setReportContent(res.text);
+        setReportAiEngine(res.engine || 'Claude 3.7 Sonnet');
+        EventBus.publish(
+          'com.restorationai.report.claude_generated',
+          { projectId: project.id, profileId: activeProfile.id, engine: res.engine },
+          project.id,
+          `Report generated via ${res.engine || 'Claude Report Pipeline'}`,
+          'success'
+        );
+      }
+    } catch (err) {
+      console.error('Claude report generation failed:', err);
+      EventBus.publish(
+        'com.restorationai.report.error',
+        { projectId: project.id, error: String(err) },
+        project.id,
+        'Report AI generation encountered an issue; retaining compiled report.',
+        'warning'
+      );
+    } finally {
+      setIsGeneratingClaude(false);
+    }
   };
 
   const handleDownloadPDF = async () => {
@@ -626,6 +682,27 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({
           </div>
 
           <div className="flex items-center flex-wrap gap-2">
+            {/* Claude AI Report Writer Button */}
+            <button
+              onClick={handleGenerateClaudeReport}
+              disabled={isGeneratingClaude}
+              className="px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-sm disabled:opacity-50"
+              title="Generate or polish this IICRC Carrier Report using Claude AI"
+            >
+              {isGeneratingClaude ? (
+                <Loader2 size={14} className="animate-spin text-purple-300" />
+              ) : (
+                <Sparkles size={14} className="text-purple-300" />
+              )}
+              <span>{isGeneratingClaude ? 'Writing with Claude...' : 'Claude AI Report'}</span>
+            </button>
+
+            {reportAiEngine && (
+              <span className="px-2 py-1 rounded-lg bg-purple-950/60 border border-purple-500/30 text-[10px] font-mono text-purple-300 hidden md:inline-block">
+                Engine: {reportAiEngine}
+              </span>
+            )}
+
             {/* Digital Signatures Vault Button */}
             <button
               onClick={() => setIsSignatureVaultOpen(true)}

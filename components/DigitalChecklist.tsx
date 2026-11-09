@@ -48,6 +48,7 @@ import {
   generateSeedMoistureMatrix
 } from '../services/adaptiveMitigationEngine';
 import { DigitalSignatureModal, SignatureResult } from './DigitalSignatureModal';
+import { SignaturePad, SignaturePadSavePayload } from './SignaturePad';
 import { 
   MoistureReadingModal, 
   EquipmentLoggerModal, 
@@ -166,6 +167,7 @@ export const DigitalChecklist: React.FC<DigitalChecklistProps> = ({ project, onU
   const [isMoistureModalOpen, setIsMoistureModalOpen] = useState(false);
   const [isEquipmentModalOpen, setIsEquipmentModalOpen] = useState(false);
   const [isChemicalModalOpen, setIsChemicalModalOpen] = useState(false);
+  const [inlineSignPhaseId, setInlineSignPhaseId] = useState<string | null>(null);
 
   // Sync to parent project whenever core state updates
   const syncToProject = (
@@ -431,6 +433,43 @@ export const DigitalChecklist: React.FC<DigitalChecklistProps> = ({ project, onU
       { phaseId: sigModalState.phaseId, signer: result.name },
       project.id,
       `Phase signed electronically by ${result.name}`,
+      'success'
+    );
+  };
+
+  const handleInlinePhaseSignSave = (phaseId: string, payload: SignaturePadSavePayload) => {
+    const updatedPhases = phases.map((phase) => {
+      if (phase.id !== phaseId) return phase;
+      const existingSig = phase.signature || {
+        technicianName: '',
+        technicianSignature: '',
+        clientName: '',
+        clientSignature: '',
+        date: payload.timestamp
+      };
+      const updatedSig: PhaseSignature = {
+        ...existingSig,
+        technicianName: payload.signerName,
+        technicianSignature: payload.signatureDataUrl,
+        signeeRole: payload.signerRole || 'Lead Mitigation Technician',
+        date: payload.timestamp
+      };
+      return {
+        ...phase,
+        signature: updatedSig,
+        status: phase.items.every((i) => i.completed) ? 'completed' : phase.status
+      };
+    });
+
+    setPhases(updatedPhases);
+    setInlineSignPhaseId(null);
+    syncToProject(updatedPhases);
+
+    EventBus.publish(
+      'com.restorationai.checklist.signed',
+      { phaseId, signer: payload.signerName },
+      project.id,
+      `Section signed & saved as Base64 by ${payload.signerName}`,
       'success'
     );
   };
@@ -1418,56 +1457,83 @@ export const DigitalChecklist: React.FC<DigitalChecklistProps> = ({ project, onU
                     </div>
                   )}
 
-                  {/* Phase Electronic Sign-Off Section */}
-                  <div className="pt-3 border-t border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-950/40 p-3.5 rounded-2xl">
-                    <div>
-                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <Lock size={12} className="text-brand-cyan" /> Section Verification Sign-Off
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        {hasSignature
-                          ? `Verified by ${phase.signature?.technicianName} on ${new Date(phase.signature?.date || 0).toLocaleDateString()}`
-                          : 'Requires technician attestation upon completing section tasks.'}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      {hasSignature ? (
-                        <div className="flex items-center space-x-2">
-                          <img
-                            src={phase.signature?.technicianSignature}
-                            alt="Technician Signature"
-                            className="h-9 px-2 bg-slate-950 border border-white/10 rounded-xl object-contain"
-                          />
-                          <button
-                            onClick={() => handleOpenSignature(phase.id, 'technician')}
-                            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition"
-                          >
-                            Re-sign
-                          </button>
+                  {/* Phase Electronic Sign-Off Section (Inline Signature Pad + Modal Support) */}
+                  <div className="pt-3 border-t border-white/5 space-y-3 bg-slate-950/40 p-3.5 rounded-2xl">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <Lock size={12} className="text-brand-cyan" /> Section Verification Sign-Off
                         </div>
-                      ) : (
-                        <button
-                          onClick={() => handleOpenSignature(phase.id, 'technician')}
-                          className="px-4 py-2 bg-brand-cyan hover:bg-cyan-400 text-slate-900 rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow transition active:scale-95 whitespace-nowrap"
-                        >
-                          <PenTool size={13} /> Sign Section
-                        </button>
-                      )}
+                        <div className="text-[11px] text-slate-400">
+                          {hasSignature
+                            ? `Verified by ${phase.signature?.technicianName} on ${new Date(phase.signature?.date || 0).toLocaleDateString()} · Saved as Base64 in Project`
+                            : 'Sign directly inline below or open full legal attestation modal.'}
+                        </div>
+                      </div>
 
-                      {!phase.signature?.clientSignature ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {hasSignature ? (
+                          <div className="flex items-center space-x-2">
+                            <img
+                              src={phase.signature?.technicianSignature}
+                              alt="Technician Signature"
+                              className="h-9 px-2 bg-slate-950 border border-white/10 rounded-xl object-contain"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setInlineSignPhaseId(inlineSignPhaseId === phase.id ? null : phase.id)
+                              }
+                              className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition"
+                            >
+                              {inlineSignPhaseId === phase.id ? 'Close Pad' : 'Redraw Inline'}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setInlineSignPhaseId(inlineSignPhaseId === phase.id ? null : phase.id)
+                            }
+                            className="px-4 py-2 bg-brand-cyan hover:bg-cyan-400 text-slate-900 rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow transition active:scale-95 whitespace-nowrap"
+                          >
+                            <PenTool size={13} /> {inlineSignPhaseId === phase.id ? 'Hide Signature Pad' : 'Sign Section Inline'}
+                          </button>
+                        )}
+
                         <button
-                          onClick={() => handleOpenSignature(phase.id, 'client')}
+                          type="button"
+                          onClick={() => handleOpenSignature(phase.id, 'technician')}
                           className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition whitespace-nowrap"
                         >
-                          Client Witness
+                          Full e-Sign Modal
                         </button>
-                      ) : (
-                        <span className="text-xs text-emerald-400 font-bold px-2">
-                          ✓ Client Witnessed
-                        </span>
-                      )}
+
+                        {!phase.signature?.clientSignature ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenSignature(phase.id, 'client')}
+                            className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition whitespace-nowrap"
+                          >
+                            Client Witness
+                          </button>
+                        ) : (
+                          <span className="text-xs text-emerald-400 font-bold px-2">
+                            ✓ Client Witnessed
+                          </span>
+                        )}
+                      </div>
                     </div>
+
+                    {inlineSignPhaseId === phase.id && (
+                      <SignaturePad
+                        compact
+                        label={`${phase.title} — Technician Sign-Off`}
+                        defaultSignerName={adaptiveConfig.technicianName || 'Lead Mitigation Tech'}
+                        existingSignatureDataUrl={phase.signature?.technicianSignature}
+                        onSave={(payload) => handleInlinePhaseSignSave(phase.id, payload)}
+                      />
+                    )}
                   </div>
                 </div>
               )}

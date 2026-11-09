@@ -824,6 +824,7 @@ export interface ProjectScopeOutline {
     techName: string;
     date: string;
     signed: boolean;
+    signatureDataUrl?: string;
   };
 }
 
@@ -864,6 +865,12 @@ export interface InitialDamageAssessmentChecklist {
   checklistItems: DamageAssessmentChecklistItem[];
   summaryConclusion: string;
   recommendations: string[];
+  technicianSignOff?: {
+    techName: string;
+    date: string;
+    signed: boolean;
+    signatureDataUrl?: string;
+  };
 }
 
 export interface ProjectDocumentationTemplates {

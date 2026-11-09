@@ -702,6 +702,8 @@ const AI_ROUTER_METHODS = new Set([
   'detectMoistureAnomalies',
   'analyzeMediaMitigationAssessment',
   'generatePreliminaryDamageReport',
+  'generateClaudeReport',
+  'buildFloorplanFromImages',
 ]);
 
 api.post('/ai/router/:method', async (req: Request, res: Response) => {
@@ -712,12 +714,309 @@ api.post('/ai/router/:method', async (req: Request, res: Response) => {
   const args = Array.isArray(req.body?.args) ? req.body.args : [];
   const aiRouter = new IntelligenceRouter(req.usageCtx);
   try {
-    const fn = (aiRouter as unknown as Record<string, (...a: unknown[]) => Promise<{ text: string }>>)[method];
+    const fn = (aiRouter as unknown as Record<string, (...a: unknown[]) => Promise<{ text: string; engine?: string }>>)[method];
     const result = await fn.apply(aiRouter, args);
-    res.json({ text: result.text });
+    res.json({ text: result.text, engine: result.engine });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Google Maps Platform Geocoding & Reverse Geocoding Server Proxy
+// (Avoids browser CORS Trap CF1 and legacy google.maps.Geocoder JS class)
+// Docs: https://developers.google.com/maps/documentation/geocoding/overview?utm_campaign=gmp_mcp_codeassist_v1_aistudio
+// ---------------------------------------------------------------------------
+api.get('/maps/reverse-geocode', async (req: Request, res: Response) => {
+  const lat = parseFloat(String(req.query.lat || ''));
+  const lng = parseFloat(String(req.query.lng || ''));
+
+  if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return res.status(400).json({ error: 'Valid latitude (-90..90) and longitude (-180..180) are required.' });
+  }
+
+  const mapsKey = process.env.GOOGLE_MAPS_PLATFORM_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '';
+  const hasValidKey = Boolean(mapsKey) && mapsKey !== 'YOUR_API_KEY';
+
+  if (hasValidKey) {
+    try {
+      // 1. Try Geocoding API v4 (geocode.googleapis.com/v4/geocode/location)
+      const v4Url = new URL('https://geocode.googleapis.com/v4/geocode/location');
+      v4Url.searchParams.append('location.latitude', String(lat));
+      v4Url.searchParams.append('location.longitude', String(lng));
+      v4Url.searchParams.append('languageCode', 'en');
+
+      const v4Resp = await fetch(v4Url.toString(), {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': mapsKey,
+          'X-Goog-FieldMask': 'results.placeId,results.formattedAddress,results.addressComponents,results.location,results.granularity,plusCode',
+          'X-Goog-Maps-Solution-ID': 'gmp_mcp_codeassist_v1_aistudio',
+        },
+      });
+
+      if (v4Resp.status === 429) {
+        return res.status(429).json({ quotaExceeded: true, error: 'RESOURCE_EXHAUSTED' });
+      }
+
+      if (v4Resp.ok) {
+        const v4Data = (await v4Resp.json()) as {
+          results?: Array<{
+            placeId?: string;
+            formattedAddress?: string;
+            granularity?: string;
+            location?: { latitude?: number; longitude?: number };
+          }>;
+          plusCode?: { globalCode?: string; compoundCode?: string };
+          error?: { status?: string };
+        };
+
+        if (v4Data?.error?.status === 'RESOURCE_EXHAUSTED') {
+          return res.status(429).json({ quotaExceeded: true, error: 'RESOURCE_EXHAUSTED' });
+        }
+
+        const top = v4Data.results?.[0];
+        if (top?.formattedAddress) {
+          return res.json({
+            formattedAddress: top.formattedAddress,
+            placeId: top.placeId || '',
+            granularity: top.granularity || 'ROOFTOP',
+            plusCode: v4Data.plusCode?.compoundCode || v4Data.plusCode?.globalCode || '',
+            lat,
+            lng,
+            source: 'Google Maps Geocoding API',
+            allResults: v4Data.results?.slice(0, 4).map((r) => ({
+              formattedAddress: r.formattedAddress || '',
+              placeId: r.placeId || '',
+              granularity: r.granularity || '',
+            })) || [],
+          });
+        }
+      }
+
+      // 2. Try standard Geocoding REST API endpoint if v4 was not enabled on the project
+      const stdUrl = new URL('https://maps.googleapis.com/maps/api/geocode/json');
+      stdUrl.searchParams.append('latlng', `${lat},${lng}`);
+      stdUrl.searchParams.append('key', mapsKey);
+
+      const stdResp = await fetch(stdUrl.toString(), {
+        headers: {
+          'X-Goog-Maps-Solution-ID': 'gmp_mcp_codeassist_v1_aistudio',
+        },
+      });
+
+      if (stdResp.status === 429) {
+        return res.status(429).json({ quotaExceeded: true, error: 'RESOURCE_EXHAUSTED' });
+      }
+
+      if (stdResp.ok) {
+        const stdData = (await stdResp.json()) as {
+          status?: string;
+          results?: Array<{
+            formatted_address?: string;
+            place_id?: string;
+            geometry?: { location_type?: string };
+          }>;
+          plus_code?: { compound_code?: string; global_code?: string };
+        };
+
+        if (stdData.status === 'OVER_QUERY_LIMIT') {
+          return res.status(429).json({ quotaExceeded: true, error: 'OVER_QUERY_LIMIT' });
+        }
+
+        const topStd = stdData.results?.[0];
+        if (stdData.status === 'OK' && topStd?.formatted_address) {
+          return res.json({
+            formattedAddress: topStd.formatted_address,
+            placeId: topStd.place_id || '',
+            granularity: topStd.geometry?.location_type || 'ROOFTOP',
+            plusCode: stdData.plus_code?.compound_code || stdData.plus_code?.global_code || '',
+            lat,
+            lng,
+            source: 'Google Maps Geocoding API',
+            allResults: stdData.results?.slice(0, 4).map((r) => ({
+              formattedAddress: r.formatted_address || '',
+              placeId: r.place_id || '',
+              granularity: r.geometry?.location_type || '',
+            })) || [],
+          });
+        }
+      }
+    } catch (gmpErr) {
+      console.warn('Google Maps reverse geocoding error, trying fallback:', gmpErr);
+    }
+  }
+
+  // Fallback reverse geocoding when Maps API key is not configured or returns no results
+  try {
+    const osmResp = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+      {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'RestorationAI/1.0',
+        },
+      }
+    );
+    if (osmResp.ok) {
+      const osmData = (await osmResp.json()) as {
+        display_name?: string;
+        address?: Record<string, string>;
+      };
+      if (osmData?.display_name) {
+        const addr = osmData.address;
+        let cleanAddress = '';
+        if (addr) {
+          const streetPart = [addr.house_number, addr.road].filter(Boolean).join(' ');
+          const city = addr.city || addr.town || addr.village || addr.suburb || '';
+          const cityStatePart = [city, addr.state].filter(Boolean).join(', ');
+          cleanAddress = [streetPart, cityStatePart, addr.postcode].filter(Boolean).join(' ');
+        }
+        return res.json({
+          formattedAddress: cleanAddress || osmData.display_name,
+          placeId: '',
+          granularity: 'APPROXIMATE',
+          plusCode: '',
+          lat,
+          lng,
+          source: 'Geolocation Fallback',
+          allResults: [{ formattedAddress: cleanAddress || osmData.display_name, placeId: '', granularity: 'APPROXIMATE' }],
+        });
+      }
+    }
+  } catch (fallbackErr) {
+    console.warn('Fallback reverse geocoding failed:', fallbackErr);
+  }
+
+  return res.json({
+    formattedAddress: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+    placeId: '',
+    granularity: 'COORDINATES_ONLY',
+    plusCode: '',
+    lat,
+    lng,
+    source: 'Coordinates',
+    allResults: [],
+  });
+});
+
+api.get('/maps/geocode', async (req: Request, res: Response) => {
+  const query = String(req.query.address || '').trim();
+  if (!query) {
+    return res.status(400).json({ error: 'address query parameter is required.' });
+  }
+
+  // Check if the user entered raw "lat, lng" coordinates directly into the address search box
+  const coordMatch = query.match(/^(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)$/);
+  if (coordMatch) {
+    const lat = parseFloat(coordMatch[1]);
+    const lng = parseFloat(coordMatch[2]);
+    if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      // Redirect internally to reverse-geocode logic
+      req.query.lat = String(lat);
+      req.query.lng = String(lng);
+    }
+  }
+
+  const mapsKey = process.env.GOOGLE_MAPS_PLATFORM_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '';
+  const hasValidKey = Boolean(mapsKey) && mapsKey !== 'YOUR_API_KEY';
+
+  if (hasValidKey) {
+    try {
+      const stdUrl = new URL('https://maps.googleapis.com/maps/api/geocode/json');
+      stdUrl.searchParams.append('address', query);
+      stdUrl.searchParams.append('key', mapsKey);
+
+      const stdResp = await fetch(stdUrl.toString(), {
+        headers: {
+          'X-Goog-Maps-Solution-ID': 'gmp_mcp_codeassist_v1_aistudio',
+        },
+      });
+
+      if (stdResp.status === 429) {
+        return res.status(429).json({ quotaExceeded: true, error: 'RESOURCE_EXHAUSTED' });
+      }
+
+      if (stdResp.ok) {
+        const stdData = (await stdResp.json()) as {
+          status?: string;
+          results?: Array<{
+            formatted_address?: string;
+            place_id?: string;
+            geometry?: { location?: { lat: number; lng: number }; location_type?: string };
+          }>;
+        };
+
+        if (stdData.status === 'OVER_QUERY_LIMIT') {
+          return res.status(429).json({ quotaExceeded: true, error: 'OVER_QUERY_LIMIT' });
+        }
+
+        if (stdData.status === 'OK' && Array.isArray(stdData.results) && stdData.results.length > 0) {
+          return res.json({
+            results: stdData.results.slice(0, 5).map((r) => ({
+              formattedAddress: r.formatted_address || query,
+              displayName: r.formatted_address || query,
+              placeId: r.place_id || '',
+              lat: r.geometry?.location?.lat,
+              lng: r.geometry?.location?.lng,
+              granularity: r.geometry?.location_type || 'ROOFTOP',
+            })),
+            source: 'Google Maps Geocoding API',
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Google Maps forward geocode failed, falling back:', err);
+    }
+  }
+
+  try {
+    const osmResp = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1`,
+      {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'RestorationAI/1.0',
+        },
+      }
+    );
+    if (osmResp.ok) {
+      const osmResults = (await osmResp.json()) as Array<{
+        display_name: string;
+        lat?: string;
+        lon?: string;
+        address?: Record<string, string>;
+      }>;
+      if (Array.isArray(osmResults)) {
+        return res.json({
+          results: osmResults.map((item) => {
+            const addr = item.address;
+            let clean = '';
+            if (addr) {
+              const streetPart = [addr.house_number, addr.road].filter(Boolean).join(' ');
+              const city = addr.city || addr.town || addr.village || addr.suburb || '';
+              const cityStatePart = [city, addr.state].filter(Boolean).join(', ');
+              clean = [streetPart, cityStatePart, addr.postcode].filter(Boolean).join(' ');
+            }
+            return {
+              formattedAddress: clean || item.display_name,
+              displayName: item.display_name,
+              placeId: '',
+              lat: item.lat ? parseFloat(item.lat) : undefined,
+              lng: item.lon ? parseFloat(item.lon) : undefined,
+              granularity: 'APPROXIMATE',
+            };
+          }),
+          source: 'Address Lookup Fallback',
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('Fallback forward geocode failed:', err);
+  }
+
+  return res.json({ results: [], source: 'None' });
 });
 
 api.post('/ai/process-scan', async (req: Request, res: Response) => {
